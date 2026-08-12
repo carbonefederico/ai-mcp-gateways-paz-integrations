@@ -1,0 +1,175 @@
+
+<!--
+    PingOne Authorize Decision Endpoint integration for Azure API Management (MCP)
+
+    Configuration (Named Values):
+    {{PingOneTokenUrl}}
+    {{PingOneDecisionEndpoint}}
+    {{PingOneClientId}}
+    {{PingOneClientSecret}} (Secret)
+
+    Production note:
+    This sample intentionally acquires a client credentials token for every request
+    to keep the flow easy to understand.
+
+    For production, cache the OAuth access token using APIM cache policies:
+    - cache-lookup-value
+    - cache-store-value
+
+    Store the token until shortly before its expires_in value.
+-->
+<fragment>
+	<!-- ========================================================= -->
+	<!-- 1. Parse the incoming MCP request -->
+	<!-- ========================================================= -->
+	<!-- Read the incoming MCP JSON body once and preserve it for later extraction. -->
+	<set-variable name="mcp" value="@(context.Request.Body.As<JObject>(preserveContent:true))" />
+	<set-variable name="method" value="@((string)((JObject)context.Variables["mcp"])["method"])" />
+	<set-variable name="tool" value="@((string)((JObject)context.Variables["mcp"])["params"]?["name"])" />
+	<set-variable name="arguments" value="@(((JObject)context.Variables["mcp"])["params"]?["arguments"]?.ToString())" />
+	<set-variable name="requestId" value="@(((JObject)context.Variables["mcp"])["id"]?.ToString())" />
+	<set-variable name="incomingBearer" value="@{
+            var auth = context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;, &quot;&quot;);
+            return auth.StartsWith(&quot;Bearer &quot;, StringComparison.OrdinalIgnoreCase)
+                ? auth.Substring(7)
+                : &quot;&quot;;
+        }" />
+	<!-- ========================================================= -->
+	<!-- 2. Acquire PingOne OAuth access token -->
+	<!-- ========================================================= -->
+	<!-- Request a client credentials access token from PingOne so APIM can call the decision endpoint. -->
+	<send-request mode="new" response-variable-name="tokenResponse" timeout="20" ignore-error="false">
+		<set-url>{{PingOneTokenUrl}}</set-url>
+		<set-method>POST</set-method>
+		<set-header name="Authorization" exists-action="override">
+			<value>@{
+                    var clientId = "{{PingOneClientId}}";
+                    var clientSecret = "{{PingOneClientSecret}}";
+
+                    return "Basic " +
+                        Convert.ToBase64String(
+                            System.Text.Encoding.UTF8.GetBytes(clientId + ":" + clientSecret)
+                        );
+                }</value>
+		</set-header>
+		<set-header name="Content-Type" exists-action="override">
+			<value>application/x-www-form-urlencoded</value>
+		</set-header>
+		<set-body>grant_type=client_credentials&amp;scope=openid</set-body>
+	</send-request>
+	<set-variable name="accessToken" value="@((string)((IResponse)context.Variables["tokenResponse"]).Body.As<JObject>()["access_token"])" />
+	<!-- ========================================================= -->
+	<!-- 3. Call PingOne Authorize Decision Endpoint -->
+	<!-- ========================================================= -->
+	<send-request mode="new" response-variable-name="p1azResponse" timeout="20" ignore-error="false">
+		<set-url>{{PingOneDecisionEndpoint}}</set-url>
+		<set-method>POST</set-method>
+		<set-header name="Authorization" exists-action="override">
+			<value>@("Bearer " + (string)context.Variables["accessToken"])</value>
+		</set-header>
+		<set-header name="Content-Type" exists-action="override">
+			<value>application/json</value>
+		</set-header>
+		<set-header name="Accept" exists-action="override">
+			<value>application/json</value>
+		</set-header>
+		<set-header name="User-Agent" exists-action="override">
+			<value>Azure-APIM</value>
+		</set-header>
+		<set-body>@{
+                    var parameters = new JObject();
+                    parameters["gateway.type"] = "MS-APIM";
+                    parameters["gateway.service"] = (string)context.Variables["pazService"];
+                    parameters["gateway.method"] = (string)context.Variables["method"];
+                    parameters["gateway.bearerToken"] = (string)context.Variables["incomingBearer"];
+                    parameters["gateway.requestId"] = (string)context.Variables["requestId"];
+                    
+                    var tool = (string)context.Variables["tool"];
+                    if (!string.IsNullOrEmpty(tool))
+                    {
+                        parameters["gateway.tool"] = tool;
+                    }
+
+                    var args = (string)context.Variables["arguments"];
+                    if (!string.IsNullOrEmpty(args))
+                    {
+                        parameters["gateway.arguments"] = args;
+                    }
+
+                    return new JObject(
+                        new JProperty("parameters", parameters)
+                    ).ToString();}
+            </set-body>
+	</send-request>
+	<!-- ========================================================= -->
+	<!-- 4. Process authorization decision -->
+	<!-- ========================================================= -->
+	<set-variable name="p1az" value="@(((IResponse)context.Variables["p1azResponse"]).Body.As<JObject>())" />
+	<set-variable name="decision" value="@((string)((JObject)context.Variables["p1az"])["decision"])" />
+	<!-- If the decision is anything other than PERMIT, stop the request and return a 403 payload. -->
+	<choose>
+		<when condition="@(!&quot;PERMIT&quot;.Equals((string)context.Variables[&quot;decision&quot;], StringComparison.OrdinalIgnoreCase))">
+			<set-variable name="errorCode" value="@{
+                    var body = (JObject)context.Variables["p1az"];
+                    var statements = body["statements"] as JArray;
+
+                    if (statements == null || statements.Count == 0)
+                    {
+                        return "access-denied";
+                    }
+
+                    return (string)statements[0]["code"] ?? "access-denied";}" />
+			<set-variable name="errorMessage" value="@{
+                    var body = (JObject)context.Variables["p1az"];
+                    var statements = body["statements"] as JArray;
+
+                    if (statements == null || statements.Count == 0)
+                    {
+                        return "Access denied";
+                    }
+
+                    return (string)statements[0]["payload"] ?? "Access denied";
+                }" />
+			<set-variable name="obligatory" value="@{
+                    var body = (JObject)context.Variables["p1az"];
+                    var statements = body["statements"] as JArray;
+
+                    if (statements == null || statements.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    return (bool?)statements[0]["obligatory"] ?? false;
+                }" />
+			<set-variable name="fulfilled" value="@{
+                    var body = (JObject)context.Variables["p1az"];
+                    var statements = body["statements"] as JArray;
+
+                    if (statements == null || statements.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    return (bool?)statements[0]["fulfilled"] ?? false;
+                }" />
+			<return-response>
+				<set-status code="403" reason="Forbidden" />
+				<set-header name="Content-Type" exists-action="override">
+					<value>application/json</value>
+				</set-header>
+				<set-body>@{
+                        return new JObject(
+                            new JProperty("error",
+                                new JObject(
+                                    new JProperty("code", (string)context.Variables["errorCode"]),
+                                    new JProperty("message", (string)context.Variables["errorMessage"]),
+                                    new JProperty("obligatory", (bool)context.Variables["obligatory"]),
+                                    new JProperty("fulfilled", (bool)context.Variables["fulfilled"])
+                                )
+                            )
+                        ).ToString();
+                    }</set-body>
+			</return-response>
+		</when>
+	</choose>
+</fragment>
