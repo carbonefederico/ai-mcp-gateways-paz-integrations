@@ -4,12 +4,6 @@ This repository contains the PingOne Authorize integration artifacts for MCP gat
 
 Each gateway integration uses PingOne Authorize as the centralized Policy Decision Point (PDP). The gateway acts as the Policy Enforcement Point (PEP): it collects the MCP call context, asks PingOne Authorize for a decision, and enforces the result — without embedding business authorization logic in the gateway itself.
 
-## Blog Post Series
-
-| Post | Gateway | Description |
-|---|---|---|
-| [Part 1 — Azure API Management](https://your-blog-url/centralizing-mcp-authorization-with-p1authorize-part-1-azure-apim) | Azure APIM | APIM policy fragment that delegates MCP tool authorization to PingOne Authorize |
-| [Part 2 — Amazon Bedrock AgentCore Gateway](https://your-blog-url/centralizing-mcp-authorization-with-p1authorize-part-2-aws-agentcore) | AWS AgentCore | Lambda request interceptor that calls PingOne Authorize before AgentCore routes to the MCP target |
 
 ## Repository Structure
 
@@ -20,6 +14,8 @@ azure-apim/
 ```
 
 ---
+
+> **Disclaimer:** The configuration steps in this section were AI generated and may contain inaccuracies.
 
 ## PingOne Authorize Configuration
 
