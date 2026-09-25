@@ -225,8 +225,9 @@ curl -s -X POST https://<random>.ngrok-free.dev/mcp/mortgage \
 APIM has a native **MCP server** resource type — use it (it wraps the backend
 MCP endpoint and gives the MCP-specific management surface).
 
-**APIM → MCP Servers → + Expose an existing MCP server**, with these values
-(the exact configuration used for the local demo):
+**APIM portal → APIs → MCP servers (Preview) → + Create MCP server →
+Expose an existing MCP server**, with these values (the exact configuration
+used for the local demo):
 
 | Field | Value | Notes |
 |---|---|---|
