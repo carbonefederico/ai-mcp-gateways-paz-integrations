@@ -115,21 +115,17 @@ dsconfig --no-prompt set-access-token-validator-prop \
 dsconfig --no-prompt set-http-servlet-extension-prop \
   --extension-name "Sideband API" \
   --set "shared-secret-header-name:PDG-TOKEN" \
-  --add "shared-secrets:MS APIM"
+  --add "shared-secrets:APIM-SIDEBAND"
 
 dsconfig --no-prompt create-sideband-api-shared-secret \
-  --secret-name "MS APIM" \
+  --secret-name "APIM-SIDEBAND" \
   --set "shared-secret:<generate-a-random-secret>"
 
-# One endpoint per public APIM base path, all pinned to the same service:
+# The sideband endpoint: base-path must match the APIM MCP server's public
+# base path; service pins which policy set evaluates; validator validates
+# the bearer token inside the envelope.
 dsconfig --no-prompt create-sideband-api-endpoint \
   --endpoint-name "APIM Mortgage MCP" \
-  --set "service:APIM Mortgage MCP" \
-  --set "access-token-validator:JWT-Lab" \
-  --set "base-path:/mortgage-mcp"
-
-dsconfig --no-prompt create-sideband-api-endpoint \
-  --endpoint-name "APIM Mortgage MCP Local" \
   --set "service:APIM Mortgage MCP" \
   --set "access-token-validator:JWT-Lab" \
   --set "base-path:/mortgage-mcp-local"
@@ -245,28 +241,19 @@ environment) is:
 https://<your-apim>.azure-api.net/mortgage-mcp-local/mcp/mortgage
 ```
 
-Note the base path (`/mortgage-mcp-local`) **does not** need to match the
-original sideband endpoint's `base-path` (`/mortgage-mcp`) — but each public
-base path needs a sideband endpoint whose `base-path` matches it. Sideband
-endpoints match on path prefix; a path that matches no endpoint falls through
-to the **Default service**, whose generic policy set (token validation only)
-permits any valid token — your MCP-specific policies never evaluate. This is
-a silent security hole, not a routing error.
+The PAZ sideband endpoint (section 1.3) must have a `base-path` that matches
+the APIM MCP server's **base path** — it is the path PAZ matches incoming
+envelopes on. If you named your base path `/mortgage-mcp-local` as above,
+the endpoint's `base-path` from 1.3 already matches; if you chose a
+different one, update the endpoint accordingly.
 
-For this demo there are two sideband endpoints, both pinned to the same
-service:
+Sideband endpoints match on path prefix; a path that matches no endpoint
+falls through to the **Default service**, whose generic policy set (token
+validation only) permits any valid token — your MCP-specific policies never
+evaluate. This is a silent security hole, not a routing error.
 
-```bash
-dsconfig --no-prompt create-sideband-api-endpoint \
-  --endpoint-name "APIM Mortgage MCP Local" \
-  --set "service:APIM Mortgage MCP" \
-  --set "access-token-validator:JWT-Lab" \
-  --set "base-path:/mortgage-mcp-local"
-```
-
-Verify the mapping after any APIM-side path change: make one authorized call
-and check `request.service` in the PAP decision audit log — it must read
-`APIM Mortgage MCP`, not `Default`.
+Verify the mapping: make one authorized call and check `request.service` in
+the PAP decision audit log — it must read `APIM Mortgage MCP`, not `Default`.
 
 Then attach the authorization layer:
 
