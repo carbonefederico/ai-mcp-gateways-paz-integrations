@@ -1,0 +1,1 @@
+{"pagination":{"page":1,"pageSize":100,"totalItems":1,"totalPages":1},"data":[{"id":"e3d57cf0-5b74-4696-ab7d-15b01fdbc685","version":"a2019bfa-9c08-4d6c-9a38-8d302ba7dbb1","type":"Target","name":"Inline target","description":"","shared":false,"permissions":{"inherit":true,"rolePermissions":[]},"targeted":{"services":["12780e5b-f3dd-4e60-9e92-78688b29c52b"]},"properties":[]}]}

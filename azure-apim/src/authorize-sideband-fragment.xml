@@ -1,0 +1,494 @@
+<!--
+  Ping Authorize Sideband integration for Azure API Management (MCP).
+  Works with both PingOne Authorize (cloud) and PingAuthorize (self-hosted);
+  the sideband protocol is shared between the two products.
+  Production baseline with optional diagnostics.
+
+  Named Values:
+    {{AuthorizeSidebandRequestEndpoint}}
+      Base URL WITHOUT /sideband/request.
+      Example (PingOne Authorize): https://http-access-api.pingone.eu/v1/environments/{environmentId}
+      Example (PingAuthorize):     https://paz.example.com:7443
+
+    {{AuthorizeSidebandClientToken}} (secret)
+      The sideband shared secret configured on the authorization server
+      (PingOne Authorize gateway credential / PingAuthorize Sideband API
+      shared secret).
+
+    {{AuthorizeSidebandDebug}}
+      Set to false by default. Set to true temporarily to return a redacted
+      Sideband request and the complete authorization response to the API client.
+
+  Sideband decision semantics:
+    - HTTP 200 without a top-level "response" object: PERMIT
+    - HTTP 200 with a top-level "response" object: DENY
+    - Any non-200 response or transport failure: integration error
+
+  APIM doesn't expose the originating TCP source port to policy expressions,
+  but the Sideband API requires a value between 1 and 65535. This demo policy
+  therefore uses 5034 as a synthetic source port, matching the working
+  Node.js example.
+-->
+<fragment>
+    <!-- Preserve the exact inbound MCP body. Sideband requires this field to be a string. -->
+    <set-variable name="authorizeOriginalRequestBody"
+                  value="@(context.Request.Body == null ? string.Empty : context.Request.Body.As&lt;string&gt;(preserveContent: true))" />
+
+    <set-variable name="authorizeDebugEnabled"
+                  value="@(&quot;{{AuthorizeSidebandDebug}}&quot;.Equals(&quot;true&quot;, StringComparison.OrdinalIgnoreCase))" />
+
+    <!-- Build the exact Sideband request envelope once so it can also be
+         surfaced in the temporary diagnostic response. -->
+    <set-variable name="authorizeSidebandRequestBody" value="@{
+        var originalUrl = context.Request.OriginalUrl;
+        var scheme = originalUrl.Scheme.ToLowerInvariant();
+        var includePort = (scheme == &quot;http&quot; &amp;&amp; originalUrl.Port != 80) ||
+                          (scheme == &quot;https&quot; &amp;&amp; originalUrl.Port != 443);
+        var requestUrl = originalUrl.Scheme + &quot;://&quot; +
+                         originalUrl.Host +
+                         (includePort ? &quot;:&quot; + originalUrl.Port.ToString() : string.Empty) +
+                         originalUrl.Path +
+                         originalUrl.QueryString;
+
+        // Match the header array produced by the working Node.js example.
+        var sidebandHeaders = new JArray();
+        sidebandHeaders.Add(
+            new JObject(
+                new JProperty(&quot;Accept&quot;, &quot;application/json&quot;)
+            )
+        );
+        sidebandHeaders.Add(
+            new JObject(
+                new JProperty(&quot;Content-Type&quot;, &quot;application/json&quot;)
+            )
+        );
+        sidebandHeaders.Add(
+            new JObject(
+                new JProperty(
+                    &quot;Host&quot;,
+                    originalUrl.Host +
+                    (includePort ? &quot;:&quot; + originalUrl.Port.ToString() : string.Empty)
+                )
+            )
+        );
+        sidebandHeaders.Add(
+            new JObject(
+                new JProperty(
+                    &quot;Authorization&quot;,
+                    context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;, string.Empty)
+                )
+            )
+        );
+
+        var serializedBody =
+            (string)context.Variables[&quot;authorizeOriginalRequestBody&quot;];
+
+        if (!string.IsNullOrEmpty(serializedBody))
+        {
+            try
+            {
+                serializedBody = JToken.Parse(serializedBody)
+                    .ToString(Newtonsoft.Json.Formatting.None);
+            }
+            catch
+            {
+                // Preserve a non-JSON body exactly as received.
+            }
+        }
+
+        var payload = new JObject(
+            new JProperty(&quot;source_ip&quot;, context.Request.IpAddress ?? string.Empty),
+            new JProperty(&quot;source_port&quot;, 5034),
+            new JProperty(&quot;method&quot;, context.Request.Method),
+            new JProperty(&quot;url&quot;, requestUrl),
+            new JProperty(&quot;http_version&quot;, &quot;1.1&quot;),
+            new JProperty(&quot;headers&quot;, sidebandHeaders),
+            new JProperty(
+                &quot;body&quot;,
+                serializedBody
+            )
+        );
+
+        return payload.ToString(Newtonsoft.Json.Formatting.None);
+    }" />
+
+    <!-- Send the Sideband request envelope. -->
+    <send-request mode="new"
+                  response-variable-name="authorizeSidebandResponse"
+                  timeout="20"
+                  ignore-error="true">
+        <set-url>@(&quot;{{AuthorizeSidebandRequestEndpoint}}&quot;.TrimEnd('/') + &quot;/sideband/request&quot;)</set-url>
+        <set-method>POST</set-method>
+
+        <set-header name="PDG-TOKEN" exists-action="override">
+            <value>{{AuthorizeSidebandClientToken}}</value>
+        </set-header>
+
+        <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+        </set-header>
+
+        <set-header name="Accept" exists-action="override">
+            <value>application/json</value>
+        </set-header>
+
+        <set-header name="User-Agent" exists-action="override">
+            <value>azure-apim-authorize-sideband/1.0</value>
+        </set-header>
+
+        <set-body>@((string)context.Variables["authorizeSidebandRequestBody"])</set-body>
+    </send-request>
+
+    <!-- A transport failure leaves the response variable null. Fail closed. -->
+    <choose>
+        <when condition="@(!context.Variables.ContainsKey(&quot;authorizeSidebandResponse&quot;) || context.Variables[&quot;authorizeSidebandResponse&quot;] == null)">
+            <return-response>
+                <set-status code="502" reason="Bad Gateway" />
+                <set-header name="Content-Type" exists-action="override">
+                    <value>application/json</value>
+                </set-header>
+                <set-body>@{
+                    return new JObject(
+                        new JProperty("error",
+                            new JObject(
+                                new JProperty("code", "sideband-unavailable"),
+                                new JProperty("message", "Authorization Sideband service is unavailable")
+                            )
+                        )
+                    ).ToString(Newtonsoft.Json.Formatting.None);
+                }</set-body>
+            </return-response>
+        </when>
+    </choose>
+
+    <set-variable name="authorizeSidebandHttpStatus"
+                  value="@(((IResponse)context.Variables[&quot;authorizeSidebandResponse&quot;]).StatusCode)" />
+
+    <!-- A non-200 response is an integration error, not an authorization denial. -->
+    <choose>
+        <when condition="@((int)context.Variables[&quot;authorizeSidebandHttpStatus&quot;] != 200)">
+            <choose>
+                <when condition="@((bool)context.Variables[&quot;authorizeDebugEnabled&quot;])">
+            <return-response>
+                <set-status code="502" reason="Bad Gateway" />
+                <set-header name="Content-Type" exists-action="override">
+                    <value>application/json</value>
+                </set-header>
+                <set-body>@{
+                    var response =
+                        (IResponse)context.Variables["authorizeSidebandResponse"];
+                    var responseHeaders = new JObject();
+
+                    foreach (var header in response.Headers)
+                    {
+                        responseHeaders[header.Key] = string.Join(", ", header.Value);
+                    }
+
+                    var rawBody = response.Body.As&lt;string&gt;(preserveContent: true);
+                    JToken responseBody;
+
+                    try
+                    {
+                        responseBody = JToken.Parse(rawBody);
+                    }
+                    catch
+                    {
+                        responseBody = new JValue(rawBody);
+                    }
+
+                    var requestBody =
+                        JObject.Parse((string)context.Variables["authorizeSidebandRequestBody"]);
+                    var requestHeaders = requestBody["headers"] as JArray;
+
+                    if (requestHeaders != null)
+                    {
+                        foreach (var headerToken in requestHeaders)
+                        {
+                            var headerObject = headerToken as JObject;
+                            if (headerObject != null)
+                            {
+                                foreach (var property in headerObject.Properties())
+                                {
+                                    if (property.Name.Equals("authorization", StringComparison.OrdinalIgnoreCase) ||
+                                        property.Name.Equals("cookie", StringComparison.OrdinalIgnoreCase) ||
+                                        property.Name.Equals("proxy-authorization", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        property.Value = "[REDACTED]";
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    return new JObject(
+                        new JProperty("error",
+                            new JObject(
+                                new JProperty("code", "sideband-error"),
+                                new JProperty(
+                                    "message",
+                                    "Authorize returned HTTP " +
+                                    ((int)context.Variables["authorizeSidebandHttpStatus"]).ToString()
+                                ),
+                                new JProperty(
+                                    "note",
+                                    "Temporary diagnostics are enabled; remove them before production"
+                                )
+                            )
+                        ),
+                        new JProperty(
+                            "sidebandEndpoint",
+                            "{{AuthorizeSidebandRequestEndpoint}}".TrimEnd('/') + "/sideband/request"
+                        ),
+                        new JProperty("sidebandRequest", requestBody),
+                        new JProperty("authorizeResponse",
+                            new JObject(
+                                new JProperty("statusCode", response.StatusCode),
+                                new JProperty("statusReason", response.StatusReason),
+                                new JProperty("headers", responseHeaders),
+                                new JProperty("body", responseBody)
+                            )
+                        )
+                    ).ToString(Newtonsoft.Json.Formatting.None);
+                }</set-body>
+            </return-response>
+                </when>
+                <otherwise>
+                    <return-response>
+                        <set-status code="502" reason="Bad Gateway" />
+                        <set-header name="Content-Type" exists-action="override">
+                            <value>application/json</value>
+                        </set-header>
+                        <set-body>@{
+                            return new JObject(
+                                new JProperty("error",
+                                    new JObject(
+                                        new JProperty("code", "sideband-error"),
+                                        new JProperty(
+                                            "message",
+                                            "Authorization service integration error"
+                                        )
+                                    )
+                                )
+                            ).ToString(Newtonsoft.Json.Formatting.None);
+                        }</set-body>
+                    </return-response>
+                </otherwise>
+            </choose>
+        </when>
+    </choose>
+
+    <set-variable name="authorizeSidebandBody"
+                  value="@(((IResponse)context.Variables[&quot;authorizeSidebandResponse&quot;]).Body.As&lt;JObject&gt;(preserveContent: true))" />
+
+    <!-- HTTP 200 plus a response object is a Sideband denial. -->
+    <choose>
+        <when condition="@(((JObject)context.Variables[&quot;authorizeSidebandBody&quot;])[&quot;response&quot;] is JObject)">
+            <set-variable name="authorizeDenyStatus" value="@{
+                var sideband = (JObject)context.Variables[&quot;authorizeSidebandBody&quot;];
+                var denial = (JObject)sideband[&quot;response&quot;];
+                int status;
+
+                return Int32.TryParse((string)denial[&quot;response_code&quot;], out status)
+                    &amp;&amp; status &gt;= 100
+                    &amp;&amp; status &lt;= 599
+                        ? status
+                        : 403;
+            }" />
+
+            <set-variable name="authorizeDenyReason" value="@{
+                var sideband = (JObject)context.Variables[&quot;authorizeSidebandBody&quot;];
+                var denial = (JObject)sideband[&quot;response&quot;];
+                return (string)denial[&quot;response_status&quot;] ?? &quot;Forbidden&quot;;
+            }" />
+
+            <set-variable name="authorizeDenyContentType" value="@{
+                if ((bool)context.Variables[&quot;authorizeDebugEnabled&quot;])
+                {
+                    return &quot;application/json&quot;;
+                }
+
+                var sideband = (JObject)context.Variables[&quot;authorizeSidebandBody&quot;];
+                var denial = (JObject)sideband[&quot;response&quot;];
+                var headers = denial[&quot;headers&quot;] as JArray;
+
+                if (headers != null)
+                {
+                    foreach (var token in headers)
+                    {
+                        var header = token as JObject;
+                        if (header == null)
+                        {
+                            continue;
+                        }
+
+                        var value = header.GetValue(
+                            &quot;content-type&quot;,
+                            StringComparison.OrdinalIgnoreCase
+                        );
+
+                        if (value != null)
+                        {
+                            return (string)value;
+                        }
+                    }
+                }
+
+                return &quot;application/json&quot;;
+            }" />
+
+            <set-variable name="authorizeDenyWwwAuthenticate" value="@{
+                var sideband = (JObject)context.Variables[&quot;authorizeSidebandBody&quot;];
+                var denial = (JObject)sideband[&quot;response&quot;];
+                var headers = denial[&quot;headers&quot;] as JArray;
+
+                if (headers != null)
+                {
+                    foreach (var token in headers)
+                    {
+                        var header = token as JObject;
+                        if (header == null)
+                        {
+                            continue;
+                        }
+
+                        var value = header.GetValue(
+                            &quot;www-authenticate&quot;,
+                            StringComparison.OrdinalIgnoreCase
+                        );
+
+                        if (value != null)
+                        {
+                            return (string)value;
+                        }
+                    }
+                }
+
+                return string.Empty;
+            }" />
+
+            <set-variable name="authorizeDenyBody" value="@{
+                    var sideband = (JObject)context.Variables[&quot;authorizeSidebandBody&quot;];
+                    var denial = (JObject)sideband[&quot;response&quot;];
+                    JToken requestId = JValue.CreateNull();
+
+                    try
+                    {
+                        var originalBody = (string)context.Variables[&quot;authorizeOriginalRequestBody&quot;];
+                        if (!string.IsNullOrEmpty(originalBody))
+                        {
+                            var mcp = JObject.Parse(originalBody);
+                            if (mcp[&quot;id&quot;] != null)
+                            {
+                                requestId = mcp[&quot;id&quot;];
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // Keep a null JSON-RPC id when the original body isn't JSON.
+                    }
+
+                    var status = (int)context.Variables[&quot;authorizeDenyStatus&quot;];
+                    var reason = (string)context.Variables[&quot;authorizeDenyReason&quot;];
+
+                    if ((bool)context.Variables[&quot;authorizeDebugEnabled&quot;])
+                    {
+                        var requestBody =
+                            JObject.Parse((string)context.Variables[&quot;authorizeSidebandRequestBody&quot;]);
+                        var requestHeaders = requestBody[&quot;headers&quot;] as JArray;
+
+                        if (requestHeaders != null)
+                        {
+                            foreach (var headerToken in requestHeaders)
+                            {
+                                var headerObject = headerToken as JObject;
+                                if (headerObject != null)
+                                {
+                                    foreach (var property in headerObject.Properties())
+                                    {
+                                        if (property.Name.Equals(&quot;authorization&quot;, StringComparison.OrdinalIgnoreCase) ||
+                                            property.Name.Equals(&quot;cookie&quot;, StringComparison.OrdinalIgnoreCase) ||
+                                            property.Name.Equals(&quot;proxy-authorization&quot;, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            property.Value = &quot;[REDACTED]&quot;;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        return new JObject(
+                            new JProperty(&quot;jsonrpc&quot;, &quot;2.0&quot;),
+                            new JProperty(&quot;id&quot;, requestId),
+                            new JProperty(&quot;error&quot;,
+                                new JObject(
+                                    new JProperty(&quot;code&quot;, status == 401 ? -32001 : -32003),
+                                    new JProperty(&quot;message&quot;, reason),
+                                    new JProperty(
+                                        &quot;note&quot;,
+                                        &quot;Temporary Sideband denial diagnostics are enabled&quot;
+                                    )
+                                )
+                            ),
+                            new JProperty(&quot;sidebandRequest&quot;, requestBody),
+                            new JProperty(&quot;authorizeResponse&quot;,
+                                new JObject(
+                                    new JProperty(&quot;statusCode&quot;, 200),
+                                    new JProperty(&quot;statusReason&quot;, &quot;OK&quot;),
+                                    new JProperty(&quot;body&quot;, sideband)
+                                )
+                            )
+                        ).ToString(Newtonsoft.Json.Formatting.None);
+                    }
+
+                    var denialBody = (string)denial[&quot;body&quot;];
+                    if (!string.IsNullOrEmpty(denialBody))
+                    {
+                        return denialBody;
+                    }
+
+                    return new JObject(
+                        new JProperty(&quot;jsonrpc&quot;, &quot;2.0&quot;),
+                        new JProperty(&quot;id&quot;, requestId),
+                        new JProperty(&quot;error&quot;,
+                            new JObject(
+                                new JProperty(&quot;code&quot;, status == 401 ? -32001 : -32003),
+                                new JProperty(&quot;message&quot;, reason)
+                            )
+                        )
+                    ).ToString(Newtonsoft.Json.Formatting.None);
+                }" />
+
+            <!-- Relay the authorization service's denial status and challenge. In particular:
+                 401 = authentication/token failure or authentication step-up;
+                 403 = authenticated request lacks authorization/scope. -->
+            <choose>
+                <when condition="@(!string.IsNullOrEmpty((string)context.Variables[&quot;authorizeDenyWwwAuthenticate&quot;]))">
+                    <return-response>
+                        <set-status code="@((int)context.Variables[&quot;authorizeDenyStatus&quot;])"
+                                    reason="@((string)context.Variables[&quot;authorizeDenyReason&quot;])" />
+                        <set-header name="Content-Type" exists-action="override">
+                            <value>@((string)context.Variables["authorizeDenyContentType"])</value>
+                        </set-header>
+                        <set-header name="WWW-Authenticate" exists-action="override">
+                            <value>@((string)context.Variables["authorizeDenyWwwAuthenticate"])</value>
+                        </set-header>
+                        <set-body>@((string)context.Variables["authorizeDenyBody"])</set-body>
+                    </return-response>
+                </when>
+                <otherwise>
+                    <return-response>
+                        <set-status code="@((int)context.Variables[&quot;authorizeDenyStatus&quot;])"
+                                    reason="@((string)context.Variables[&quot;authorizeDenyReason&quot;])" />
+                        <set-header name="Content-Type" exists-action="override">
+                            <value>@((string)context.Variables["authorizeDenyContentType"])</value>
+                        </set-header>
+                        <set-body>@((string)context.Variables["authorizeDenyBody"])</set-body>
+                    </return-response>
+                </otherwise>
+            </choose>
+        </when>
+    </choose>
+
+    <!-- No response object means PERMIT; continue to the backend unchanged. -->
+</fragment>
