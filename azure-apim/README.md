@@ -53,10 +53,10 @@ This is how the fragment works.
      "source_ip": "<client IP>",
      "source_port": 5034,
      "method": "POST",
-     "url": "https://apimid4ai.azure-api.net/mortgage-mcp/mcp/mortgage",
+     "url": "https://<your-apim>.azure-api.net/mortgage-mcp/mcp/mortgage",
      "http_version": "1.1",
      "headers": [{"Accept": "application/json"}, {"Content-Type": "application/json"},
-                 {"Host": "apimid4ai.azure-api.net"}, {"Authorization": "Bearer eyJ..."}],
+                 {"Host": "<your-apim>.azure-api.net"}, {"Authorization": "Bearer eyJ..."}],
      "body": "{\"jsonrpc\":\"2.0\", ...}"
    }
    ```

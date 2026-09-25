@@ -237,10 +237,12 @@ used for the local demo):
 | **Base path** | `/mortgage-mcp-local` | The public path. The exposed MCP URL becomes `https://<apim>.azure-api.net/mortgage-mcp-local/mcp/mortgage`. |
 | **Products** | *(none for the demo)* | Products control subscription requirements — leave empty to call without a subscription key. |
 
-The resulting client-facing URL is:
+The resulting client-facing URL (with `<your-apim>` being your instance's
+hostname, e.g. `https://apimid4ai.azure-api.net` in this demo's
+environment) is:
 
 ```
-https://apimid4ai.azure-api.net/mortgage-mcp-local/mcp/mortgage
+https://<your-apim>.azure-api.net/mortgage-mcp-local/mcp/mortgage
 ```
 
 Note the base path (`/mortgage-mcp-local`) **does not** need to match the
