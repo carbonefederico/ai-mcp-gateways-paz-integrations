@@ -1,10 +1,30 @@
-# Testing locally — MCP server + APIM + PAZ, end to end
+# Testing — the mortgage MCP demo, end to end
 
-This guide runs the full authorization chain on your laptop:
+This guide covers everything needed to reproduce the tested integration:
+the sample MCP server, the PAZ policies that authorize it, the local setup,
+and how to run and inspect the tests.
 
 ```
 client → APIM (sideband fragment) → PingAuthorize → policy decision → local demo-mcp (via ngrok)
 ```
+
+## The sample MCP server
+
+The policies guard a **demo mortgage MCP server** —
+[`carbonefederico/demo-mcp`](https://github.com/carbonefederico/demo-mcp),
+a synthetic banking backend exposing several MCP servers over HTTP. The
+demo uses the **mortgage** server (`/mcp/mortgage`) and its four tools:
+
+| Tool | What it does | Risk |
+|---|---|---|
+| `get_mortgage_summary` | Retrieve a customer's mortgage summary | read |
+| `calculate_affordability` | Affordability calculation | read |
+| `generate_rate_quote` | Generate a rate quote | read |
+| `submit_mortgage_change_request` | Submit a servicing change (`changeType`: `PAYMENT_DATE`, `TERM_CHANGE`, `RATE_SWITCH`, `OVERPAYMENT`) | write, risk-tiered by `changeType` |
+
+`PAYMENT_DATE` (moving a due date) is treated as low risk; the other three
+are economically risky and require human approval — this distinction is what
+the HITL policies encode.
 
 ## Prerequisites
 

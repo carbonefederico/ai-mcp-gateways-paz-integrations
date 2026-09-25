@@ -16,7 +16,7 @@ both products, so the same gateway artifacts work with either.
 
 | Folder | Contents |
 |---|---|
-| [`azure-apim/`](azure-apim/) | **Azure API Management integration** — the sideband policy fragment (PEP), the exported PingAuthorize policy set (session methods, VIP delegation gate, payload-risk-tiered HITL changes, default deny), a 14-test end-to-end harness, and guides: main README (fragment + policies) and [test/LOCAL-SETUP.md](azure-apim/test/LOCAL-SETUP.md) (run the whole stack locally). |
+| [`azure-apim/`](azure-apim/) | **Azure API Management integration** — the sideband policy fragment (PEP), the exported PingAuthorize policy set (session methods, VIP delegation gate, payload-risk-tiered HITL changes, default deny), a 14-test end-to-end harness, and guides: main README (fragment + policies) and [test/test.md](azure-apim/test/test.md) (sample MCP, policies, local setup, tests). |
 | `aws-agentcore-mcp-gateway/` | AWS AgentCore MCP gateway integration (in progress). |
 | `test-scripts/` | Scratch scripts used during development (OIDC token-exchange experiments, sideband probes). |
 
