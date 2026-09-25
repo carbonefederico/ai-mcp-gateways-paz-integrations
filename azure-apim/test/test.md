@@ -81,7 +81,7 @@ holds the imported policies and the root decision node (the
 ```bash
 dsconfig --no-prompt set-external-server-prop \
   --server-name pingauthorizepap \
-  --set "branch:ID4AI Control Plane" \
+  --set "branch:<the-branch-you-imported-the-policies-into>" \
   --set "decision-node:<global-decision-point-policyset-id>"
 ```
 
@@ -139,8 +139,9 @@ between path and policy set.
 
 The snapshot files live in [`policy-snapshot/`](policy-snapshot/):
 `attributes.json`, `statements.json`, `rules.json`, `policies.json`,
-`policysets.json` — the exported contents of the `ID4AI Control Plane`
-branch. Import them by hand in the Policy Editor web UI (there is no
+`policysets.json` — the exported contents of the policy branch the demo
+policies were developed on. Import them into a branch of your Policy Editor
+(you can create a dedicated branch or work on a copy of the default). Import them by hand in the Policy Editor web UI (there is no
 snapshot import API configured by default; a *snapshot store* can be
 configured under Policy Editor → Settings to enable one-click
 export/import):
