@@ -223,10 +223,10 @@ curl -s -X POST https://<random>.ngrok-free.dev/mcp/mortgage \
 ## 4. Expose the MCP server in Azure APIM (portal)
 
 APIM has a native **MCP server** resource type — use it (it wraps the backend
-MCP endpoint and gives the MCP-specific management surface). The screenshot
-below shows the exact values used for the local demo.
+MCP endpoint and gives the MCP-specific management surface).
 
-**APIM → MCP Servers → + Expose an existing MCP server**:
+**APIM → MCP Servers → + Expose an existing MCP server**, with these values
+(the exact configuration used for the local demo):
 
 | Field | Value | Notes |
 |---|---|---|
