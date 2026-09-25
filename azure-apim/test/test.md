@@ -4,16 +4,11 @@ This guide covers everything needed to reproduce the tested integration:
 the sample MCP server, the PAZ policies that authorize it, the local setup,
 and how to run and inspect the tests.
 
-```
-client → APIM (sideband fragment) → PingAuthorize → policy decision → local demo-mcp (via ngrok)
-```
-
 ## The sample MCP server
 
 The policies guard a **demo mortgage MCP server** —
 [`carbonefederico/demo-mcp`](https://github.com/carbonefederico/demo-mcp),
-a synthetic banking backend exposing several MCP servers over HTTP. The
-demo uses the **mortgage** server (`/mcp/mortgage`) and its four tools:
+a synthetic banking backend exposing four tools:
 
 | Tool | What it does | Risk |
 |---|---|---|
@@ -28,23 +23,27 @@ the HITL policies encode.
 
 ## Prerequisites
 
-1. **A fresh PingAuthorize + PingAuthorize PAP deployment** (the standard
-   Ping DevOps Helm chart works). PAZ must run in PDP mode `external`
-   pointing at the PAP (Policy Editor). Configure it with step 1 below:
-   external server, token validator, sideband shared secret + endpoints,
-   then import the policy snapshot via the Policy Editor.
-2. **Node.js ≥ 22**, `ngrok` (free account), `curl`, `jq`.
-3. **An Azure APIM instance** (portal access; the MCP server is created in the portal).
+1. **A PingAuthorize + PingAuthorize PAP deployment** (the standard Ping
+   DevOps Helm chart works), already running in PDP mode `external` — PAZ
+   serves the sideband API and delegates decisions to the PAP (Policy
+   Editor). If yours is a fresh install, section 1.1 sets that up.
+2. **Node.js ≥ 22**
+3. `ngrok` (free account), `curl`, `jq`.
+4. **An Azure APIM instance** (portal access; the MCP server is created in the portal).
 
-## 1. Configure a fresh PingAuthorize + Policy Editor
+## 1. Configure the PAZ server
 
-These steps assume a **fresh PingAuthorize + PingAuthorize PAP deployment**
-(the standard Ping DevOps Helm chart works) in **external PDP mode** — PAZ
-serves the sideband API and delegates decisions to the PAP (Policy Editor).
 All `dsconfig` commands run against the **PAZ** server (`--no-prompt` shown;
 `--hostname/--port/bindDN` omitted for brevity).
 
-### 1.1 Point PAZ at the PAP (external PDP mode)
+### 1.1 Only for a fresh install: point PAZ at the PAP (external PDP mode)
+
+Skip this if your deployment already runs `pdp-mode: external` (check with
+`dsconfig get-policy-decision-service-prop`). On a fresh install the Ping
+DevOps chart's default profile usually wires PAZ→PAP already; verify the
+`base-url` and `shared-secret` match your environment rather than re-running
+`create-external-server` (it fails if the server already exists — use
+`set-external-server-prop` instead).
 
 ```bash
 # The policy server PAZ pulls decisions from. Replace the base-url with your
@@ -102,8 +101,7 @@ dsconfig --no-prompt set-access-token-validator-prop \
 ### 1.3 Sideband shared secret + endpoints
 
 ```bash
-# The secret APIM presents (header name is the servlet extension's choice;
-# Ping's default is CLIENT-TOKEN — the fragment in this repo uses PDG-TOKEN).
+# The secret APIM presents; the header name must match what the fragment sends (PDG-TOKEN).
 dsconfig --no-prompt set-http-servlet-extension-prop \
   --extension-name "Sideband API" \
   --set "shared-secret-header-name:PDG-TOKEN" \
