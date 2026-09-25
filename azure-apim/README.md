@@ -74,8 +74,8 @@ This is how the fragment works.
 3. **POST the envelope** to `{AuthorizeSidebandRequestEndpoint}/sideband/request`
    with:
    - the sideband shared secret in the `PDG-TOKEN` header (the header name is
-     configured on the server's Sideband API servlet extension — Ping's
-     default is `CLIENT-TOKEN`; this deployment renamed it to `PDG-TOKEN`),
+     whatever the server's Sideband API servlet extension is configured with
+     — this integration uses `PDG-TOKEN`),
    - `Content-Type: application/json`.
 
 4. **Enforce the decision** (fail-closed):
@@ -119,17 +119,17 @@ APIM portal → **APIs → Policy fragments → + Create**:
    fragment → **Policies** tab).
 3. **Save**.
 
-### 3. Attach the fragment to your API (or MCP server)
+### 3. Attach the fragment to your MCP server
 
 The fragment is included by an outer policy file —
 [`src/authorize-sideband-policy.xml`](src/authorize-sideband-policy.xml),
 whose entire job is `<include-fragment fragment-id="AuthorizeSidebandAuthorization" />`
-in the inbound section:
+in the inbound section.
 
-- **Plain HTTP API**: APIM → APIs → your API → **All operations → Policies**,
-  paste `src/authorize-sideband-policy.xml`, save.
-- **APIM MCP server** (the native MCP resource): APIM → **MCP Servers** →
-  your MCP server → **Policies** → paste the same file, save.
+APIM portal → **MCP Servers** → your MCP server → **Policies** → paste the
+full contents of `src/authorize-sideband-policy.xml` → **Save**. Every MCP
+call routed through that server now runs the sideband check before reaching
+the backend MCP server.
 
 This is also how the fragment is "pointed at the actual policies": it never
 references policies directly — it POSTs the request context to the PAZ
@@ -148,7 +148,7 @@ fragment (`PDG-TOKEN`) matches the server's
 ---
 
 The fragment is generic — it authorizes *whatever MCP traffic flows through
-the API/MCP server it is attached to*, against whatever policies your PAZ
+the MCP server it is attached to*, against whatever policies your PAZ
 evaluates for that service. What those policies actually decide, and the
 sample MCP server they guard, is the subject of the test guide:
 
