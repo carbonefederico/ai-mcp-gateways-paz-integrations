@@ -73,10 +73,10 @@ dsconfig --no-prompt set-policy-decision-service-prop \
   --set "trust-framework-version:v2"
 ```
 
-After the PAP is reachable, repoint the external server at the branch that
-holds the imported policies and the root decision node (the
-`Global Decision Point` policy set — find its id under
-**Policy Editor → Policy Sets**, then):
+After the PAP is reachable (and after importing the snapshot in section 1.4),
+repoint the external server at the branch that holds the imported policies
+and the root decision node (the `Global Decision Point` policy set — find
+its id under **Policy Editor → Policy Sets**, then):
 
 ```bash
 dsconfig --no-prompt set-external-server-prop \
@@ -135,45 +135,29 @@ The `service` value must match a **service defined in the Policy Editor**
 (Policy Editor → Services → create `APIM Mortgage MCP`). It is the glue
 between path and policy set.
 
-### 1.4 Import the policy snapshot (manual, Policy Editor)
+### 1.4 Import the policy snapshot (Policy Editor UI)
 
-The snapshot files live in [`policy-snapshot/`](policy-snapshot/):
-`attributes.json`, `statements.json`, `rules.json`, `policies.json`,
-`policysets.json` — the exported contents of the policy branch the demo
-policies were developed on. Import them into a branch of your Policy Editor
-(you can create a dedicated branch or work on a copy of the default). Import them by hand in the Policy Editor web UI (there is no
-snapshot import API configured by default; a *snapshot store* can be
-configured under Policy Editor → Settings to enable one-click
-export/import):
+The demo policies ship as a ready-to-import snapshot:
+[`policy-snapshot/Mortgage MCP policies.snapshot`](policy-snapshot/Mortgage%20MCP%20policies.snapshot)
+— a `.snapshot` export of the Policy Editor branch holding the full policy
+content (Trust Framework attributes, statements, rules, policies, and the
+`APIM Mortgage MCP` policy set).
 
-1. Open the Policy Editor → **Trust Framework → Attributes**. Recreate the
-   attribute tree from `attributes.json`, **parents first**:
-   - Keep the built-in `HttpRequest` tree; the imported attributes attach
-     under `HttpRequest.AccessToken` (claims), the HTTP request **body**
-     attribute (JSONPath over the request body: `MCP Method`, `MCP Tool
-     Name`, `MCP Change Type`, `MCP Mortgage Id`), and
-     `HttpRequest.RequestHeaders`.
-   - Each attribute's JSONPath expression and resolver (parent) are in
-     `attributes.json` — mirror the `resolvers[].id` onto the corresponding
-     target attribute (the JSON ids differ per instance).
-   - Claim-derived attributes (`approved_for`, `tctx_change_type`,
-     `tctx_mortgage_id`, `act_sub`, `sub_type`) must have
-     `defaultValue: _null` so absence resolves predictably.
-2. **Statements**: recreate each from `statements.json` (code
-   `denied-reason`, payload = the JSON error body).
-3. **Rules** from `rules.json`, then **policies** from `policies.json`
-   (attach the rules as children, FirstApplicable), then the
-   **`APIM Mortgage MCP` policy set** from `policysets.json` with children
-   in the documented order (Allow Session Methods, Allow Delegated Token by
-   VIP Users Only, Allow read operations, Allow low risk changes, Deny High
-   Risk Changes Without HITL, Allow High Risk Changes with HITL,
-   Default Deny).
-4. **Wire the decision node**: add the new policy set as a child of the
-   target instance's `Global Decision Point` policy set (the policy set the
-   PAZ `decision-node` property points at). Without this, requests fall
-   through to the Default service and only token validation runs.
-5. Commit the branch. In PDP-external mode the branch tip serves decisions
-   immediately.
+Import it through the Policy Editor web UI (this is the supported way to
+move branch content between Policy Editor instances — a snapshot imports
+as a new branch):
+
+1. Open your Policy Editor → **Branch Manager → Version Control →
+   Import Snapshot**.
+2. Choose the `Mortgage MCP policies.snapshot` file.
+3. Name the new policy branch it creates (the demo used `ID4AI Control
+   Plane` — any name works).
+4. Commit the branch's initial state when prompted.
+
+Then point PAZ at that branch: in section 1.1's final `set-external-server-prop`,
+use the branch name you just created and the `Global Decision Point`
+policy set id of **the imported branch** (Policy Editor → Policy Sets).
+In PDP-external mode the branch tip serves decisions immediately.
 
 Verify the wiring before testing: one authorized call through the gateway,
 then check the PAP decision audit (`/opt/out/instance/logs/decision-audit.log`)

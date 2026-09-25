@@ -23,8 +23,8 @@ azure-apim/
 └── test/
     ├── policy-e2e-tests.sh               # end-to-end policy test matrix
     ├── test.md                           # testing: sample MCP, policies, local setup, harness
-    └── policy-snapshot/                  # exported PAZ policy branch (import via Policy Editor)
-        └── attributes.json … policysets.json
+    └── policy-snapshot/
+        └── Mortgage MCP policies.snapshot   # importable Policy Editor snapshot
 ```
 
 ---
