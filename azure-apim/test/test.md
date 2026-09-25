@@ -4,6 +4,16 @@ This guide covers everything needed to reproduce the tested integration:
 the sample MCP server, the PAZ policies that authorize it, the local setup,
 and how to run and inspect the tests.
 
+> **Security disclaimer — the demo MCP server is intentionally open.** The
+> demo-mcp backend in this guide runs with `OAUTH_ENABLED` unset, so it
+> accepts unauthenticated calls. That is deliberate: this demo focuses
+> exclusively on the **APIM ↔ Ping Authorize integration**, so all
+> enforcement happens at the gateway. In a real environment the MCP server
+> would not be open — APIM (or the caller) would need to obtain tokens via
+> token exchange / client credentials and present them to the backend, and
+> the backend would validate them itself. Defense in depth, not a single
+> gate.
+
 ## The sample MCP server
 
 The policies guard a **demo mortgage MCP server** —
