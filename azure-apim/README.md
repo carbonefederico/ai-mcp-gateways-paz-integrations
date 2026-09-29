@@ -82,7 +82,7 @@ This is how the fragment works.
 
    | Sideband response | Meaning | Fragment behavior |
    |---|---|---|
-   | Transport failure / null response | integration error | `502` `sideband-unavailable` (fail closed) |
+   | Transport failure / null response | integration error | retried twice (one immediate, one after 1s — the decision probe is idempotent); if every attempt fails: `502` `sideband-unavailable` (fail closed) |
    | non-200 status | integration error, not a denial | `502` `sideband-error` |
    | HTTP 200, top-level `response` object | **DENY** | relay the denial: status, reason, headers (incl. `WWW-Authenticate`) and body from the `response` object; with debug on, a redacted diagnostic envelope is returned instead |
    | HTTP 200, no `response` object | **PERMIT** | continue to the backend MCP server |

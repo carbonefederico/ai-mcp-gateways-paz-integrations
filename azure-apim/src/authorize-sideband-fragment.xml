@@ -120,34 +120,45 @@
         return payload.ToString(Newtonsoft.Json.Formatting.None);
     }" />
 
-    <!-- Send the Sideband request envelope. -->
-    <send-request mode="new"
-                  response-variable-name="authorizeSidebandResponse"
-                  timeout="20"
-                  ignore-error="true">
-        <set-url>@(&quot;{{AuthorizeSidebandRequestEndpoint}}&quot;.TrimEnd('/') + &quot;/sideband/request&quot;)</set-url>
-        <set-method>POST</set-method>
+    <!-- Send the Sideband request envelope, retrying on transport failure.
+         APIM pools keep-alive connections to the endpoint; a pooled socket the
+         server has already closed fails instantly (null response), which shows
+         up as intermittent 502s under rapid traffic. The decision request is
+         idempotent (a pure policy evaluation, no side effects), so retries are
+         safe. Two retries: one immediate (stale pooled socket), one after a
+         1s gap (brief network blips that take out both fast attempts). -->
+    <retry condition="@(context.Variables[&quot;authorizeSidebandResponse&quot;] == null)"
+           count="2"
+           interval="1"
+           first-fast-retry="true">
+        <send-request mode="new"
+                      response-variable-name="authorizeSidebandResponse"
+                      timeout="20"
+                      ignore-error="true">
+            <set-url>@(&quot;{{AuthorizeSidebandRequestEndpoint}}&quot;.TrimEnd('/') + &quot;/sideband/request&quot;)</set-url>
+            <set-method>POST</set-method>
 
-        <set-header name="PDG-TOKEN" exists-action="override">
-            <value>{{AuthorizeSidebandClientToken}}</value>
-        </set-header>
+            <set-header name="PDG-TOKEN" exists-action="override">
+                <value>{{AuthorizeSidebandClientToken}}</value>
+            </set-header>
 
-        <set-header name="Content-Type" exists-action="override">
-            <value>application/json</value>
-        </set-header>
+            <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+            </set-header>
 
-        <set-header name="Accept" exists-action="override">
-            <value>application/json</value>
-        </set-header>
+            <set-header name="Accept" exists-action="override">
+                <value>application/json</value>
+            </set-header>
 
-        <set-header name="User-Agent" exists-action="override">
-            <value>azure-apim-authorize-sideband/1.0</value>
-        </set-header>
+            <set-header name="User-Agent" exists-action="override">
+                <value>azure-apim-authorize-sideband/1.0</value>
+            </set-header>
 
-        <set-body>@((string)context.Variables["authorizeSidebandRequestBody"])</set-body>
-    </send-request>
+            <set-body>@((string)context.Variables["authorizeSidebandRequestBody"])</set-body>
+        </send-request>
+    </retry>
 
-    <!-- A transport failure leaves the response variable null. Fail closed. -->
+    <!-- A transport failure on every attempt leaves the response variable null. Fail closed. -->
     <choose>
         <when condition="@(!context.Variables.ContainsKey(&quot;authorizeSidebandResponse&quot;) || context.Variables[&quot;authorizeSidebandResponse&quot;] == null)">
             <return-response>
