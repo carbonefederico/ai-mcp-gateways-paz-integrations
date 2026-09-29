@@ -247,7 +247,10 @@ Then attach the authorization layer:
    - `AuthorizeSidebandRequestEndpoint` = your PAZ sideband base URL, e.g.
      `https://paz.example.com`
    - `AuthorizeSidebandClientToken` (**secret**) = the sideband shared secret value
-   - `AuthorizeSidebandDebug` = `true` (helpful for first runs; turn off later)
+   - `AuthorizeSidebandDebug` = `true` (helpful for first runs; turn off
+     later — while on, the debug envelopes replace the deny relay: no
+     JSON-RPC-shaped errors and **no `WWW-Authenticate` challenge** on scope
+     denials)
 2. **Policy fragment**: APIs → Policy fragments → **+ Create** →
    name `AuthorizeSidebandAuthorization`, paste the contents of
    [`src/authorize-sideband-fragment.xml`](../src/authorize-sideband-fragment.xml).
