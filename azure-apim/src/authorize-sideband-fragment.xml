@@ -24,6 +24,14 @@
     - HTTP 200 with a top-level "response" object: DENY
     - Any non-200 response or transport failure: integration error
 
+  Challenge relay (MCP 2026-07-28 / RFC 6750):
+    The policy attaches PAZ's auth-challenge statement to scope denials. The
+    Sideband API translates that statement into a WWW-Authenticate header on
+    the deny response (Bearer error="insufficient_scope", scope="..."),
+    which this fragment relays to the client verbatim — all challenge data
+    comes from the policy decision, nothing is hardcoded in the gateway.
+    Denials without a challenge header are relayed unchanged.
+
   APIM doesn't expose the originating TCP source port to policy expressions,
   but the Sideband API requires a value between 1 and 65535. This demo policy
   therefore uses 5034 as a synthetic source port, matching the working
@@ -461,7 +469,9 @@
 
             <!-- Relay the authorization service's denial status and challenge. In particular:
                  401 = authentication/token failure or authentication step-up;
-                 403 = authenticated request lacks authorization/scope. -->
+                 403 = authenticated request lacks authorization/scope. A policy
+                 auth-challenge statement is what produces the header on a
+                 sideband deny; the fragment relays it verbatim. -->
             <choose>
                 <when condition="@(!string.IsNullOrEmpty((string)context.Variables[&quot;authorizeDenyWwwAuthenticate&quot;]))">
                     <return-response>

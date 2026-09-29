@@ -25,7 +25,7 @@ a synthetic banking backend exposing four tools:
 | `get_mortgage_summary` | Retrieve a customer's mortgage summary | read |
 | `calculate_affordability` | Affordability calculation | read |
 | `generate_rate_quote` | Generate a rate quote | read |
-| `submit_mortgage_change_request` | Submit a servicing change (`changeType`: `PAYMENT_DATE`, `TERM_CHANGE`, `RATE_SWITCH`, `OVERPAYMENT`) | write, risk-tiered by `changeType` |
+| `submit_mortgage_change_request` | Submit a servicing change (`changeType`: `PAYMENT_DATE`, `TERM_CHANGE`, `RATE_SWITCH`, `OVERPAYMENT`). For the risky types the client echoes the approved transaction id in `arguments.txn` (the demo backend accepts and discards it). | write, risk-tiered by `changeType` |
 
 `PAYMENT_DATE` (moving a due date) is treated as low risk; the other three
 are economically risky and require human approval — this distinction is what
@@ -271,6 +271,70 @@ curl -s -X POST "https://<apim>.azure-api.net/mortgage-mcp-local/mcp/mortgage" \
 # expect 401; a 200 here means the fragment is not attached to the MCP server
 ```
 
+### 4.5 OAuth protected-resource metadata (MCP discovery)
+
+The MCP authorization spec (2026-07-28) requires the protected MCP server to
+expose an RFC 9728 **protected-resource metadata** document, and scope denials
+to challenge the client (`WWW-Authenticate: Bearer error="insufficient_scope",
+scope="..."` — produced by PAZ's `auth-challenge` statements, see the policies
+section below). Clients use the document for authorization-server discovery
+and to bind tokens to the resource (RFC 8707). The sample MCP server serves
+the document itself at the path-preserved well-known location
+`/.well-known/oauth-protected-resource/<mcp-path>`; the gateway must route
+that path to it — APIM routes by API suffix, and the MCP server entity only
+matches its own base path, so the metadata route needs **a second, plain HTTP
+API**:
+
+**APIM portal → APIs → + Create API → HTTP → Manual**, with:
+
+| Field | Value | Notes |
+|---|---|---|
+| Display name | `MCP Protected Resource Metadata` | Label only. |
+| **Web service URL** | `https://<backend-host>` | The bare origin of the sample MCP server (tunnel or hosted URL) — **no** path. The API suffix is empty, so APIM forwards the *full* original path. |
+| **API URL suffix** | *(empty)* | The suffix field rejects a leading `.` (and a leading `/`); the dot lives in the operation template instead. |
+| **Subscription required** | **off** | The metadata document is public by design — a subscription key requirement breaks discovery for exactly the clients that need it. |
+| Products | *(none for the demo)* | Same reason. |
+
+Then one operation — **GET**, URL template **`/{*metadataPath}`**. The
+wildcard catches the full well-known path including the leading-dot segment
+(the dot is only invalid in the suffix field, not in an operation template).
+
+Finally an inbound policy on this API (API → Policies) — custom headers, no
+sideband fragment; the metadata is not authorized traffic:
+
+```xml
+<inbound>
+    <base />
+    <!-- Front-door host/proto, so the backend can reconstruct the
+         client-facing resource identifier (RFC 8707) instead of its own
+         hostname. Custom X-Client-* headers are used because some hosts
+         (e.g. Vercel) overwrite the standard X-Forwarded-* ones. -->
+    <set-header name="X-Client-Host" exists-action="override">
+        <value>@(context.Request.Headers.GetValueOrDefault("X-Forwarded-Host", context.Request.OriginalUrl.Host).Split(',')[0].Trim())</value>
+    </set-header>
+    <set-header name="X-Client-Proto" exists-action="override">
+        <value>@(context.Request.OriginalUrl.Scheme)</value>
+    </set-header>
+</inbound>
+```
+
+(The sample MCP server's `resourceForRequest()` prefers `X-Client-Host` /
+`X-Client-Proto`, then falls back to `X-Forwarded-*` and `Host` — so the same
+handler is correct behind a gateway, a tunnel or localhost.)
+
+Verify — the document must name the *client-facing* MCP URL, not the backend:
+
+```bash
+curl -s "https://<apim>.azure-api.net/.well-known/oauth-protected-resource/mortgage-mcp/mcp/mortgage"
+# {"resource":"https://<apim>.azure-api.net/mortgage-mcp/mcp/mortgage",
+#  "scopes_supported":["mortgage:read","mortgage:write"],
+#  "bearer_methods_supported":["header"]}
+```
+
+A `resource` naming the backend host (tunnel/hosted domain) means the
+frontend host header did not survive the hop — see the `X-Client-*` policy
+above.
+
 ## 5. Run the tests
 
 The demo uses **jwt-lab** (`https://jwt-lab-beta.vercel.app`) as the
@@ -302,7 +366,7 @@ AUD=https://<your-apim>.azure-api.net \
 
 ## 6. Inspect results
 
-**Script output**: 14 PASS lines + `Result: 14 passed, 0 failed`. Any FAIL
+**Script output**: 16 PASS lines + `Result: 16 passed, 0 failed`. Any FAIL
 means either the policies or the APIM wiring — check which stage produced the
 wrong status (401 = token validation, 403 = policy, 502 = sideband transport).
 
@@ -338,11 +402,10 @@ tool, `submit_mortgage_change_request`:
 |---|---|---|---|
 | 1 | **Allow Session Methods** | Lets through MCP session plumbing (`initialize`, `tools/list`, `ping`) — no token scopes needed. | PERMIT |
 | 2 | **Allow Delegated Token by VIP Users Only** | If the call is delegated (RFC 8693 `act.sub` present = an agent is acting for a user) and that user is not `vip_user`, deny. Direct users (no `act`) are untouched. | DENY `delegation_not_permitted` |
-| 3 | **Allow read operations** | Permits the read tools (`get_mortgage_summary`, `calculate_affordability`, `generate_rate_quote`) when the token carries `mortgage:read`. | PERMIT |
-| 4 | **Allow low risk changes** | Permits `changeType=PAYMENT_DATE` (renaming a due date — no economic risk) on `mortgage:write`. No human needed. | PERMIT |
-| 5 | **Deny High Risk Changes Without HITL** | For economically risky changes (`RATE_SWITCH`, `TERM_CHANGE`, `OVERPAYMENT`): if the token does **not** carry an approval whose transaction context mirrors this exact payload, deny with a machine-readable challenge. | DENY 403 `approval_required` |
-| 6 | **Allow High Risk Changes with HITL** | Permits risky changes **only** when the token's transaction claims match the payload claim-by-claim (see HITL below). | PERMIT |
-| 7 | **Default Deny** | Everything else — unknown tools, wrong scopes, anything unmatched. | DENY |
+| 3 | **Allow read operations** | For the read tools (`get_mortgage_summary`, `calculate_affordability`, `generate_rate_quote`): permit if the token carries `mortgage:read`, otherwise deny with an `insufficient_scope` challenge naming that scope. | PERMIT / DENY 403 `insufficient_scope` |
+| 4 | **Allow low risk changes** | For `changeType=PAYMENT_DATE` (renaming a due date — no economic risk): permit on `mortgage:write`, otherwise deny with an `insufficient_scope` challenge. No human needed. | PERMIT / DENY 403 `insufficient_scope` |
+| 5 | **High Risk Changes with HITL** | For economically risky changes (`RATE_SWITCH`, `TERM_CHANGE`, `OVERPAYMENT`): deny with an `insufficient_scope` challenge when the token lacks `mortgage:write`; permit only when the token carries an approval whose transaction id and context mirror this exact payload (see HITL below) — any mirror drift denies 403 `approval_required`. | PERMIT / DENY `insufficient_scope` or `approval_required` |
+| 6 | **Default Deny** | Everything else — unknown tools, anything unmatched. | DENY |
 
 (Plus the global **Token Validation** policy ahead of all of these: expired,
 badly signed or wrong-issuer tokens are rejected 401 before any MCP logic.)
@@ -367,13 +430,16 @@ path works as a two-phase loop:
 
 1. The agent submits a risky change → policy 5 **denies 403** with
    `{"message": "approval_required", ...}`. Nothing executed.
+   (Before the approval loop even starts, the scope gate inside policy 5
+   denies with `insufficient_scope` when the token lacks `mortgage:write`.)
 2. A human approves (in a portal). The AS performs the approval step-up and
    issues a new short-lived transaction token whose claims mirror **the
-   exact approved transaction**:
+   exact approved transaction**, including a transaction id:
 
    ```json
    {
      "approved_for": "submit_mortgage_change_request",
+     "txn": "txn-90001-term",
      "tctx": {
        "tool": "submit_mortgage_change_request",
        "changeType": "TERM_CHANGE",
@@ -386,24 +452,38 @@ path works as a two-phase loop:
    This follows the transaction-token idea
    ([draft-ietf-oauth-transaction-tokens](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-transaction-tokens)):
    the AS mints short-lived, narrowly scoped tokens whose `tctx` carries
-   the signed transaction details that downstream authorization compares
-   against. In this demo the transaction claims are conveyed **inside the
-   access token itself** (as if the AS had minted it after the approval
+   the signed transaction details and whose `txn` carries the transaction
+   id that downstream authorization compares against. In this demo the
+   transaction claims are conveyed **inside the access token itself** (as if the AS had minted it after the approval
    step-up), rather than in a separate `Txn-Token` header.
-3. The agent retries the **identical call** with that token. Policy 6
-   compares every `tctx` claim against the payload, attribute-to-attribute:
-   `tctx.tool == MCP Tool Name`, `tctx.changeType == MCP Change Type`,
-   `tctx.mortgageId == MCP Mortgage Id`. Any drift — a different change
-   type, a different mortgage — breaks the mirror and policy 5 denies
-   again. Same call + token without approval → 403; same call + approval
-   token → 200. The enforcement point never changes; only the credential
-   does.
-4. The approval is **purpose-bound and short-lived**. It isn't a blanket
+3. The agent retries the **identical call** with that token, echoing the
+   transaction id back in the tool arguments (`arguments.txn`). Policy 5's
+   permit condition compares every claim against the payload,
+   attribute-to-attribute:
+   `txn == arguments.txn`, `tctx.tool == MCP Tool Name`,
+   `tctx.changeType == MCP Change Type`, `tctx.mortgageId == MCP Mortgage Id`.
+   Any drift — a different change type, a different mortgage, a replayed
+   transaction id — breaks the mirror and policy 5 denies again. Same call +
+   token without approval → 403; same call + approval token + matching `txn`
+   → 200; the same approval token retried with a **different** `txn` (or
+   without one) → 403. The enforcement point never changes; only the
+   credential does.
+
+Note the structural pattern shared by policies 3, 4 and 5: each allow rule
+uses the **"Permit if condition holds, otherwise deny"** effect, with the
+condition carrying the *authorization requirement* (the required scope, or
+the full approval mirror) and the deny path attaching the machine-readable
+challenge. There is no separate deny policy per advice — each policy owns
+both sides of its own decision.
+4. The approval is **transaction-bound and short-lived**. It isn't a blanket
    capability: replaying the token against a different mortgage is denied
-   (the mirror breaks), and expiry is the revocation. (Production
+   (the mirror breaks), and replaying it with a different transaction id is
+   denied (the id mirror breaks). Expiry is the revocation. (Production
    hardening — beyond the demo: the backend should reject a transaction
-   context it never issued, and a spent `jti`/transaction id should not be
-   redeemable twice.)
+   context it never issued, and one-time redemption of the `txn` id — a
+   spent-id registry — remains the AS/backend's job: the PDP is stateless
+   and cannot track spent ids. In this demo the backend accepts and discards
+   the `txn` argument; a real backend would reject a `txn` it never issued.)
 
 **d) Delegation is a first-class gate.** Classic token-exchange tokens
 carry the human in `sub` (+ a `sub_type`, e.g. `vip_user`) and the acting
@@ -415,8 +495,12 @@ not just logged.
 
 ### Denials are machine-readable
 
-Every deny carries a `denied-reason` statement the gateway relays to the
-client, so an MCP agent can *react* to authorization rather than just
-fail: `approval_required` triggers the human-approval loop,
+Every deny carries a statement the gateway relays to the client, so an MCP
+agent can *react* to authorization rather than just fail:
+`approval_required` triggers the human-approval loop,
 `delegation_not_permitted` tells the agent the subject may not use this
-agent, and token failures surface as 401.
+agent, token failures surface as 401, and scope shortfalls come back as
+MCP-conformant challenges — `auth-challenge` statements make the sideband
+emit `WWW-Authenticate: Bearer error="insufficient_scope", scope="..."`
+(MCP 2026-07-28 / RFC 6750), telling the agent which scope to request in a
+step-up flow.

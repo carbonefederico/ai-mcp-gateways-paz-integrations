@@ -145,6 +145,38 @@ server-side (`Sideband API Shared Secret`), and the header name in the
 fragment (`PDG-TOKEN`) matches the server's
 `shared-secret-header-name`.
 
+### 5. Expose the OAuth protected-resource metadata route
+
+MCP's authorization spec requires the protected server to publish an RFC 9728
+**protected-resource metadata** document (`authorization_servers`,
+`scopes_supported`) and lets scope denials challenge the client
+(`WWW-Authenticate: Bearer error="insufficient_scope", scope="..."` — PAZ's
+`auth-challenge` statements produce that header on sideband denies; the
+fragment relays it). MCP clients discover the document by probing the
+well-known path on the origin they call, so APIM must route it to the backend
+MCP server — it is not created by the MCP server entity.
+
+This needs a **plain HTTP API** (not an MCP server, no fragment — the
+document is public by design and must not be subscription-gated):
+
+| Field | Value |
+|---|---|
+| Web service URL | the bare backend MCP origin (no path) |
+| API URL suffix | *(empty — see note)* |
+| Subscription required | **off** |
+| Operation | one `GET` with URL template `/{*metadataPath}` |
+| Inbound policy | forwards the front-door host/proto as `X-Client-Host` / `X-Client-Proto` so the backend can reconstruct the client-facing `resource` identifier (RFC 8707) |
+
+> The suffix field rejects values starting with `.` (and `/`), so the API
+> suffix is left empty and the dot lives in the operation template: APIM then
+> forwards the full original path
+> `/.well-known/oauth-protected-resource/...` to the backend, which serves
+> the document at exactly that path.
+
+The full portal walkthrough — including the exact inbound policy and the
+verification recipe — is in
+[`test/test.md` §4.5](test/test.md#45-oauth-protected-resource-metadata-mcp-discovery).
+
 ---
 
 The fragment is generic — it authorizes *whatever MCP traffic flows through
@@ -154,5 +186,5 @@ sample MCP server they guard, is the subject of the test guide:
 
 **➡️ Continue with [`test/test.md`](test/test.md)** — it walks through the
 sample mortgage MCP server, the test policies (importable from
-`test/policy-snapshot/`), the full local setup (PAZ, ngrok, APIM), the
-14-test matrix, and how to inspect the decisions.
+`test/policy-snapshot/`), the full local setup (PAZ, ngrok, APIM incl. the
+OAuth metadata route), the 16-test matrix, and how to inspect the decisions.

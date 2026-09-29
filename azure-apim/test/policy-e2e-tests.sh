@@ -77,14 +77,14 @@ call_mcp() {
 echo "Minting scenario tokens (jwt-lab)..."
 T_READ=$(mint '{"sub":"alice","client_id":"desktop-client","aud":"'$AUD'","scope":"mortgage:read"}' 1800)
 T_WRITE=$(mint '{"sub":"alice","client_id":"desktop-client","aud":"'$AUD'","scope":"mortgage:read mortgage:write"}' 1800)
-T_APPROVED=$(mint '{"sub":"alice","client_id":"desktop-client","aud":"'$AUD'","scope":"mortgage:read mortgage:write","approved_for":"submit_mortgage_change_request","tctx":{"tool":"submit_mortgage_change_request","changeType":"TERM_CHANGE","mortgageId":"MORT-90001"}}' 900)
+T_APPROVED=$(mint '{"sub":"alice","client_id":"desktop-client","aud":"'$AUD'","scope":"mortgage:read mortgage:write","approved_for":"submit_mortgage_change_request","txn":"txn-90001-term","tctx":{"tool":"submit_mortgage_change_request","changeType":"TERM_CHANGE","mortgageId":"MORT-90001"}}' 900)
 T_EXPIRED=$(mint '{"sub":"alice","aud":"'$AUD'","scope":"mortgage:read"}' -300)
 T_WRITE_ONLY=$(mint '{"sub":"alice","aud":"'$AUD'","scope":"mortgage:write"}' 900)
 
 T_VIP_AGENT=$(mint '{"sub":"vip_user","sub_type":"vip_user","client_id":"support-portal","aud":"'$AUD'","scope":"mortgage:read mortgage:write","act":{"sub":"customer_support_agent"}}' 1800)
 T_STD_AGENT=$(mint '{"sub":"standard_user","sub_type":"standard","client_id":"support-portal","aud":"'$AUD'","scope":"mortgage:read mortgage:write","act":{"sub":"customer_support_agent"}}' 1800)
 T_VIP_DIRECT=$(mint '{"sub":"vip_user","sub_type":"vip_user","client_id":"support-portal","aud":"'$AUD'","scope":"mortgage:read mortgage:write"}' 1800)
-T_VIP_APPROVED=$(mint '{"sub":"vip_user","sub_type":"vip_user","client_id":"support-portal","aud":"'$AUD'","scope":"mortgage:read mortgage:write","act":{"sub":"customer_support_agent"},"approved_for":"submit_mortgage_change_request","tctx":{"tool":"submit_mortgage_change_request","changeType":"TERM_CHANGE","mortgageId":"MORT-90001"}}' 1800)
+T_VIP_APPROVED=$(mint '{"sub":"vip_user","sub_type":"vip_user","client_id":"support-portal","aud":"'$AUD'","scope":"mortgage:read mortgage:write","act":{"sub":"customer_support_agent"},"approved_for":"submit_mortgage_change_request","txn":"txn-90001-term","tctx":{"tool":"submit_mortgage_change_request","changeType":"TERM_CHANGE","mortgageId":"MORT-90001"}}' 1800)
 
 # ---------------------------------------------------------------- tests ---
 PASS=0; FAIL=0
@@ -111,9 +111,11 @@ run() { # run <label> <expect-code> <token> <body>
 }
 
 BODY_T2='{"jsonrpc":"2.0","method":"tools/call","id":2,"params":{"name":"get_mortgage_summary","arguments":{"customerId":"CUST-10001"}}}'
-BODY_T3='{"jsonrpc":"2.0","method":"tools/call","id":3,"params":{"name":"submit_mortgage_change_request","arguments":{"mortgageId":"MORT-90001","changeType":"PAYMENT_DATE","requestedValue":"2026-10-01","confirmedByUser":true,"reason":"Move payment date"}}}'
-BODY_T4='{"jsonrpc":"2.0","method":"tools/call","id":4,"params":{"name":"submit_mortgage_change_request","arguments":{"mortgageId":"MORT-90001","changeType":"TERM_CHANGE","requestedValue":"30 years","confirmedByUser":true,"reason":"Extend term"}}}'
-BODY_T6='{"jsonrpc":"2.0","method":"tools/call","id":6,"params":{"name":"delete_mortgage","arguments":{"mortgageId":"MORT-90001"}}}'
+BODY_T3='{"jsonrpc":"2.0","method":"tools/call","id":3,"params":{"name":"submit_mortgage_change_request","arguments":{"mortgageId":"MORT-90001","changeType":"PAYMENT_DATE","requestedValue":"2026-10-01","confirmedByUser":true,"reason":"Move payment date","txn":"txn-90001-payment"}}}'
+BODY_T4='{"jsonrpc":"2.0","method":"tools/call","id":4,"params":{"name":"submit_mortgage_change_request","arguments":{"mortgageId":"MORT-90001","changeType":"TERM_CHANGE","requestedValue":"30 years","confirmedByUser":true,"reason":"Extend term","txn":"txn-90001-term"}}}'
+BODY_T4_WRONG_TXN='{"jsonrpc":"2.0","method":"tools/call","id":5,"params":{"name":"submit_mortgage_change_request","arguments":{"mortgageId":"MORT-90001","changeType":"TERM_CHANGE","requestedValue":"30 years","confirmedByUser":true,"reason":"Extend term","txn":"txn-replayed"}}}'
+BODY_T4_NO_TXN='{"jsonrpc":"2.0","method":"tools/call","id":6,"params":{"name":"submit_mortgage_change_request","arguments":{"mortgageId":"MORT-90001","changeType":"TERM_CHANGE","requestedValue":"30 years","confirmedByUser":true,"reason":"Extend term"}}}'
+BODY_T6='{"jsonrpc":"2.0","method":"tools/call","id":7,"params":{"name":"delete_mortgage","arguments":{"mortgageId":"MORT-90001"}}}'
 
 echo ""
 echo "--- Core policy matrix ---"
@@ -122,6 +124,8 @@ run "T2 read tool with mortgage:read"               200 "$T_READ"       "$BODY_T
 run "T3 benign PAYMENT_DATE with mortgage:write"    200 "$T_WRITE"      "$BODY_T3"
 run "T4 risky TERM_CHANGE without approval"         403 "$T_WRITE"      "$BODY_T4"
 run "T5 risky TERM_CHANGE with approval"            200 "$T_APPROVED"   "$BODY_T4"
+run "T5a approved but wrong txn (replay denied)"    403 "$T_APPROVED"   "$BODY_T4_WRONG_TXN"
+run "T5b approved token, payload without txn"       403 "$T_APPROVED"   "$BODY_T4_NO_TXN"
 run "T6 unknown tool (default deny)"                403 "$T_READ"       "$BODY_T6"
 run "T8 read tool with write-only scope"            403 "$T_WRITE_ONLY" "$BODY_T2"
 run "T9 expired token"                              401 "$T_EXPIRED"    '{"jsonrpc":"2.0","method":"tools/list","id":9}'
