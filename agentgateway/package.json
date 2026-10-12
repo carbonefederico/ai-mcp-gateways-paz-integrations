@@ -1,0 +1,18 @@
+{
+  "name": "agentgateway-paz-integration",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "agentgateway to Ping Authorize sideband integration (Envoy ext_authz gRPC adapter)",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test 'test/*.test.mjs'",
+    "start": "node src/paz-extauthz-adapter.mjs"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.12.0",
+    "@grpc/proto-loader": "^0.7.14"
+  }
+}
