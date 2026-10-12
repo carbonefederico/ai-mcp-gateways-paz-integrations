@@ -32,11 +32,15 @@ const mId = (name) => byName.get(name)?.id;
 
 const out = [];
 
-// --- package boilerplate (shapes copied from the mortgage package) ---------
+// --- package boilerplate (shapes copied from the mortgage EXPORT, which is
+// the format the importer consumes: Header, PackageHeader, ENTITIES, then
+// two PackageSeparators and EndOfPackage at the very end. The mortgage
+// template file we transform carries its separators up front, but a hand-
+// assembled package in that order unpacks as empty — the streaming reader
+// treats a Separator before any entity as the end of content.) --------------
 out.push({ "@class": "DataStreamHeader", kind: "SnapshotHeader", version: 4 });
 const pkgHeader = firstTyped("SnapshotPackageFile$PackageHeader");
 out.push({ ...pkgHeader, snapshotId: randomUUID() });
-for (const o of mortgage.filter((x) => x.type === "SnapshotPackageFile$PackageSeparator")) out.push({ ...o });
 
 // --- service ---------------------------------------------------------------
 const SERVICE_ID = randomUUID();
@@ -45,11 +49,17 @@ out.push({ ...svc, id: SERVICE_ID, version: randomUUID(), name: "AgentGateway Po
 
 // --- request-body attributes (all resolve from RequestBody) ----------------
 const REQUEST_BODY_ID = mId("RequestBody");
+// Same-named attributes reuse the mortgage template's ID: the merge into the
+// serving branch dedupes on id+fullName; a new id with the same name trips
+// DUPLICATE_FULL_NAME conflicts against the mortgage branch's attributes.
+function reuseId(name) {
+  return byName.get(name)?.id ?? randomUUID();
+}
 function mcpAttr(name, expression, valueType) {
   const tmpl = M("MCP Tool Name");
   return {
     ...tmpl,
-    id: randomUUID(),
+    id: reuseId(name),
     version: randomUUID(),
     name,
     fullName: name,
@@ -78,7 +88,10 @@ for (const a of Object.values(A)) out.push(a);
 // resolve through the AccessToken attribute; keep their resolver chain.
 function claimAttr(name, expression, valueType = "STRING", template = "txn") {
   const tmpl = M(template);
-  return { ...tmpl, id: randomUUID(), version: randomUUID(), name, fullName: name, valueProcessor: { ...tmpl.valueProcessor, expression, valueType, name: "" } };
+  // fullName must carry the parent chain (HttpRequest.AccessToken.<name>) or
+  // the import's constraint check rejects the attribute.
+  const fullName = `HttpRequest.AccessToken.${name}`;
+  return { ...tmpl, id: reuseId(name), version: randomUUID(), name, fullName, valueProcessor: { ...tmpl.valueProcessor, expression, valueType, name: "" } };
 }
 
 const T = {
@@ -271,22 +284,8 @@ R_HIGH_MIRROR.effectSettings.condition = {
 // Policy 6 — Default Deny (shape copied from template, new ids)
 const R_DEFAULT = rule("Default Deny", { effectSettings: { type: "unconditionalDeny" } });
 
-// Token Validation — copy the template policy/rules but keep shared ids.
-// The template's TV has exactly ONE rule child (Access token is inactive) and
-// carries "Invalid Token" in its statements list; its "Validate Audience"
-// rule is an ORPHAN (referenced by no policy) — the mortgage branch does not
-// enforce audience, so neither do we (mirroring the template prevents a
-// deny-everything surprise against the demo's aud).
-const TV_INACTIVE_RULE_SRC = M("Access token is inactive");
-const TV_INACTIVE_RULE = {
-  ...TV_INACTIVE_RULE_SRC,
-  id: mId("Access token is inactive"),
-  version: randomUUID(),
-  name: "Access token is inactive",
-};
-
 // Emit the rules themselves — Policies only reference them by id.
-for (const r of [TV_INACTIVE_RULE, R_SESSION, R_DELEGATION, R_READ, R_LOW, R_HIGH_SCOPE, R_HIGH_MIRROR, R_DEFAULT]) out.push(r);
+for (const r of [R_SESSION, R_DELEGATION, R_READ, R_LOW, R_HIGH_SCOPE, R_HIGH_MIRROR, R_DEFAULT]) out.push(r);
 
 // --- policies (shape template: mortgage Policy objects) --------------------
 function policy(name, childIds, condition = { empty: {} }) {
@@ -322,40 +321,20 @@ const P_HIGH = policy("High Risk Orders with HITL", [R_HIGH_SCOPE.id, R_HIGH_MIR
 });
 
 const P_DEFAULT = policy("Default Deny", [R_DEFAULT.id]);
-const P_TOKEN_VALIDATION = policy("Token Validation", [TV_INACTIVE_RULE.id]);
-// Mirror the template's TV: it carries the Invalid Token statement in its
-// statements list (the shape the Policy Editor expects for a policy-level
-// denial message when token validation fails).
-P_TOKEN_VALIDATION.statements = [mId("Invalid Token")];
-for (const p of [P_TOKEN_VALIDATION, P_SESSION, P_DELEGATION, P_READ, P_LOW, P_HIGH, P_DEFAULT]) out.push(p);
+// Emit the policies (rules were pushed above).
+for (const p of [P_SESSION, P_DELEGATION, P_READ, P_LOW, P_HIGH, P_DEFAULT]) out.push(p);
 
-// --- Token Validation's token-claim attributes (shared machinery) ----------
-// The inactive rule and the claim-attribute resolver chains reference
-// condition definitions and attributes by the mortgage ids; those objects
-// must exist in the snapshot. Copy them verbatim (same ids) from the
-// template, including the parents the claim chain hangs off (HttpRequest,
-// Constants).
-const SHARED_OBJECT_NAMES = ["active", "scope", "audience", "act_sub", "sub_type", "AccessToken", "HttpRequest", "Constants", "RequestBody", "MCP Audience", "Invalid Token", "Unauthorized Audience"];
+// --- shared token machinery --------------------------------------------------
+// The claim-attribute resolver chains reference condition definitions and
+// attributes by the mortgage ids; those objects must exist in the snapshot.
+// Copy them verbatim (same ids) from the template, including the parents the
+// claim chain hangs off (HttpRequest, Constants). Everything else a shipped
+// object references — condition definitions and the ActionDefinitions they
+// point at — is pulled verbatim by the ref-sweep below.
+const SHARED_OBJECT_NAMES = ["active", "scope", "audience", "act_sub", "sub_type", "AccessToken", "HttpRequest", "Constants", "RequestBody"];
 for (const name of SHARED_OBJECT_NAMES) {
   const o = byName.get(name);
   if (o) out.push(structuredClone(o));
-}
-// Ref-sweep over EVERY emitted object (not just the inactive rule): any
-// referenced mortgage id that hasn't shipped yet — condition definitions and
-// the ActionDefinitions they point at — gets copied.
-const produced = new Set(out.map((o) => o.id));
-const sweep = [...out];
-for (let i = 0; i < sweep.length; i++) {
-  for (const ref of collectRefs(sweep[i])) {
-    if (produced.has(ref)) continue;
-    const o = mortgage.find((x) => x.id === ref);
-    if (o) {
-      const copy = structuredClone(o);
-      out.push(copy);
-      sweep.push(copy); // the copy may reference more objects
-      produced.add(ref);
-    }
-  }
 }
 
 function collectRefs(node, acc = new Set()) {
@@ -387,31 +366,81 @@ out.push({
   id: randomUUID(),
   version: randomUUID(),
   name: "AgentGateway Portfolio MCP",
-  children: [P_TOKEN_VALIDATION.id, P_SESSION.id, P_DELEGATION.id, P_READ.id, P_LOW.id, P_HIGH.id, P_DEFAULT.id].map((id) => ({ id, type: "Policy" })),
+  // TV is owned by the Global Decision Point alone (template layout) — a
+  // policy with two parents fails the import's constraint checks.
+  children: [P_SESSION.id, P_DELEGATION.id, P_READ.id, P_LOW.id, P_HIGH.id, P_DEFAULT.id].map((id) => ({ id, type: "Policy" })),
   targets: [TARGET_ID],
 });
 
-// Global Decision Point — same NAME, NEW id (merge-safe; see header comment)
-const gdp = mortgage.find((o) => o.type === "PolicySet" && o.name === "Global Decision Point");
-out.push({
-  ...structuredClone(gdp),
-  id: randomUUID(),
-  version: randomUUID(),
-  name: "Global Decision Point",
-  children: [
-    { id: P_TOKEN_VALIDATION.id, type: "Policy" },
-    { id: portfolioSetChildPlaceholder(), type: "PolicySet" },
-  ],
-});
+// NO Global Decision Point and NO Token Validation ship in the snapshot —
+// both already live in the serving branch, and re-shipping them either fails
+// the import (their children must resolve inside the package, dragging the
+// entire mortgage subtree along) or fails the merge (a fresh-id TV claiming
+// the shared inactive rule = two parents). Instead:
+//   1. this snapshot merges in the portfolio content (all fresh ids);
+//   2. test.md §1.2 step 3 (or the PAP admin API) attaches
+//      `AgentGateway Portfolio MCP` as a second PolicySet child of the
+//      serving branch's existing GDP — the same manual step the APIM
+//      integration documents.
+// The ref-sweep (below) closes the package over the objects above only.
 
-function portfolioSetChildPlaceholder() {
-  // The GDP references the portfolio set by id; emit after the set exists.
-  return out.find((o) => o.type === "PolicySet" && o.name === "AgentGateway Portfolio MCP").id;
+// Ref-sweep over EVERY emitted object: any referenced mortgage id that
+// hasn't shipped yet — statements, condition definitions, the
+// ActionDefinitions they point at — gets copied verbatim.
+const produced = new Set(out.map((o) => o.id));
+const sweep = [...out];
+for (let i = 0; i < sweep.length; i++) {
+  for (const ref of collectRefs(sweep[i])) {
+    if (produced.has(ref)) continue;
+    const o = mortgage.find((x) => x.id === ref);
+    if (o) {
+      const copy = structuredClone(o);
+      out.push(copy);
+      sweep.push(copy); // the copy may reference more objects
+      produced.add(ref);
+    }
+  }
 }
 
 // --- end boilerplate --------------------------------------------------------
+// Entity ORDER matters to the importer: the mortgage export (the format the
+// unpacker consumes) streams ALL definition-class objects first, then the
+// policy-manager objects (Rules, Statements, Policies, Target, PolicySets)
+// at the end. Our construction interleaves them (shared-machinery copies
+// land after the policies), so reorder before writing: partition into
+// definitions and policy objects, preserving relative order in each group.
+const DEFINITION_TYPES = new Set(["ServiceDefinition", "AttributeDefinition", "ActionDefinition", "ConditionDefinition", "TestCaseDefinition", "AssertionDefinition", "TestScenarioDefinition"]);
+// leading boilerplate (DataStreamHeader + PackageHeader) stays in front;
+// only the ENTITY objects get partitioned.
+const isEntity = (o) => !o["@class"] && !(o.type ?? "").startsWith("SnapshotPackageFile");
+const lead = out.slice(0, 2).filter((o) => !isEntity(o));
+const entities = out.filter(isEntity);
+const definitions = entities.filter((o) => DEFINITION_TYPES.has(o.objectType) || DEFINITION_TYPES.has(o.type));
+const policyObjects = entities.filter((o) => !definitions.includes(o));
+// The unpacker is PHASED (disassembly of SymphonicDataSnapshotUnpacker):
+// loadTrustFramework reads Definitions until a PackageSeparator, then
+// loadPolicyManagerEntities reads any Entity until the next Separator. A
+// separator MUST sit between the definition section and the policy section,
+// or the first policy object throws "Expected a Definition object".
+const sepTemplate = mortgage.find((x) => x.type === "SnapshotPackageFile$PackageSeparator");
+out.length = 0;
+out.push(...lead, ...definitions, { ...sepTemplate }, ...policyObjects);
+
+// Second separator + EndOfPackage close the policy section.
+for (const o of mortgage.filter((x) => x.type === "SnapshotPackageFile$PackageSeparator").slice(1)) out.push({ ...o });
 for (const o of mortgage.filter((x) => x.type === "SnapshotPackageFile$EndOfPackage")) out.push({ ...o });
+
+// The PAP's JsonDataInputStream REQUIRES a DataStreamFooter: it hashes every
+// parsed element (SHA-256 of each element's compact JSON, concatenated) and
+// refuses the stream with "No footer found in JsonDataInputStream" otherwise.
+// Digest scheme reverse-engineered from the shipped encryption jar and
+// verified byte-for-byte against the mortgage snapshot's export.
+import { createHash } from "node:crypto";
+const digest = createHash("sha256");
+for (const o of out) digest.update(JSON.stringify(o));
+const digestB64 = digest.digest("base64");
+out.push({ "@class": "DataStreamFooter", digest: digestB64 });
 
 const target = path.join(here, "Portfolio MCP policies.snapshot");
 writeFileSync(target, JSON.stringify(out));
-console.log(`wrote ${target} (${out.length} objects)`);
+console.log(`wrote ${target} (${out.length} objects, digest ${digestB64.slice(0, 12)}…)`);

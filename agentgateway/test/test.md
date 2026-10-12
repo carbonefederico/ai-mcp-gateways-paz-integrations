@@ -71,35 +71,59 @@ A path matching no endpoint falls through to the **Default service**, whose
 generic policy set permits any valid token — a silent security hole, not a
 routing error. The audit check in §5 guards against it.
 
-### 1.2 Import the portfolio policies (Policy Editor UI)
+### 1.2 Import the portfolio policies (PAP admin API — no UI clicks)
 
 The demo policies ship as an importable snapshot:
 [`policy-snapshot/Portfolio MCP policies.snapshot`](policy-snapshot/Portfolio%20MCP%20policies.snapshot).
 Regenerate it any time with `node test/policy-snapshot/build-portfolio-snapshot.mjs`
-(from the `agentgateway/` folder).
+(from the `agentgateway/` folder). The snapshot is **self-contained portfolio
+content only** — service, attributes, statements, rules, six policies, and the
+`AgentGateway Portfolio MCP` policy set. It deliberately ships **no Global
+Decision Point and no Token Validation**: both already exist in the serving
+branch, and re-shipping them either fails the import (their children must
+resolve inside the package) or fails the merge (a fresh-id TV claiming the
+shared inactive rule = two parents).
 
 The serving branch is the one PAZ already points at — the APIM demo's
-`ID4AI Control Plane` branch. Snapshot imports create a NEW branch, so the
-portfolio content must be merged into the serving branch:
+`ID4AI Control Plane` branch. The import below was already executed against
+the live PAP; the commands are reproducible:
 
-1. Policy Editor → **Branch Manager → Version Control → Import Snapshot** →
-   choose the portfolio snapshot → name the new branch (the demo used
-   `Portfolio import`).
-2. Review the imported `AgentGateway Portfolio MCP` service and policy set.
-   Note the imported **Global Decision Point** policy set carries the same
-   name as the branch's existing one (fresh id, only Token Validation as
-   child) — it must NOT replace the serving branch's GDP.
-3. Merge `Portfolio import` into the serving branch (Branch Manager merge;
-   the objects are all new, so the merge is trivial except for the GDP):
-   in the merged branch, add the `AgentGateway Portfolio MCP` **policy set**
-   as a child of the serving branch's existing **Global Decision Point**
-   (alongside `APIM Mortgage MCP`), and drop the imported GDP duplicate.
-4. Commit the merge. In PDP-external mode the branch tip serves immediately.
+```bash
+PAP=https://id4ai-control-plane-pingauthorizepap.ping-devops.com
+AUTH='administrator:2FederateM0re'   # console credential; add header x-user-id: administrator
+BR=20fc6b9c-14dc-45ba-8e53-271a1b4d4e9a
 
-> **Validation step worth doing once:** open the imported `High Risk Orders
-> with HITL` policy in the Policy Editor and confirm the `MCP Amount
-> GreaterThan 10000` condition renders without schema complaints — this is
-> the one comparison op the mortgage template never exercised.
+# 1. import the snapshot into a NEW branch (raw JSON body; the package
+#    carries its own DataStreamFooter digest):
+curl -sk -u "$AUTH" -H 'x-user-id: administrator' -X POST \
+  -H 'Content-Type: application/json' \
+  --data-binary @test/policy-snapshot/"Portfolio MCP policies.snapshot" \
+  "$PAP/api/snapshot/Portfolio%20import/import"
+
+# 2. export the import branch's tip (body is an entity-reference array;
+#    '[]' exports everything):
+#    POST $PAP/api/snapshot/<tipId>/export   with body '[]'
+
+# 3. merge the export into the serving branch. Multipart: field
+#    'snapshot-file' (application/json) + field 'conflict-resolutions'
+#    (text/plain!). The three COLLISIONs on MCP Method / MCP Tool Name /
+#    MCP Transaction Id are cosmetic (the template reuses mortgage ids);
+#    TAKE_MINE keeps the portfolio expressions:
+#    POST $PAP/api/snapshot/ID4AI%20Control%20Plane/merge
+
+# 4. attach the imported set under the branch's existing Global Decision
+#    Point (GET the GDP, append the child, PUT it back), then commit:
+#    POST $PAP/api/version-control/branches/$BR/commit
+#    body: {"message":"<non-empty commit message>"}
+```
+
+What the committed branch now contains (verified by exporting the branch
+head): the `AgentGateway Portfolio MCP` service and policy set, the six
+policies with their rules and challenge/approval statements, the `MCP Amount`
+NUMBER / `MCP Amount Mirror` STRING attributes (`$.params.arguments.amount`),
+the `MCP Amount GreaterThan 10000` condition inside `High Risk Orders with
+HITL`, and the GDP with children `[Token Validation, APIM Mortgage MCP,
+AgentGateway Portfolio MCP]`. The mortgage content is untouched.
 
 Verify the wiring: one authorized call through the gateway, then the PAP
 decision audit — `request.service` must read `AgentGateway Portfolio MCP`

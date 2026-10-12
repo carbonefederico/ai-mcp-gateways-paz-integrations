@@ -23,15 +23,15 @@ test("no mortgage vocabulary survives", () => {
   assert.ok(!text.includes("changetype"), "changeType string found");
 });
 
-test("service and policy sets are portfolio-shaped", () => {
+test("service and policy sets are portfolio-shaped (the GDP attaches post-merge)", () => {
   const d = load();
   const services = d.filter((o) => o.objectType === "ServiceDefinition").map((o) => o.name);
   assert.deepEqual(services, ["AgentGateway Portfolio MCP"]);
   const sets = d.filter((o) => o.type === "PolicySet").map((o) => o.name);
-  assert.deepEqual(sets.sort(), ["AgentGateway Portfolio MCP", "Global Decision Point"]);
+  assert.deepEqual(sets, ["AgentGateway Portfolio MCP"]);
 });
 
-test("policy roster matches the six-policy pattern plus Token Validation", () => {
+test("policy roster matches the six-policy pattern (no TV, no GDP)", () => {
   const d = load();
   const names = d.filter((o) => o.type === "Policy").map((o) => o.name).sort();
   assert.deepEqual(names, [
@@ -41,7 +41,6 @@ test("policy roster matches the six-policy pattern plus Token Validation", () =>
     "Allow read operations",
     "Default Deny",
     "High Risk Orders with HITL",
-    "Token Validation",
   ]);
 });
 
@@ -85,6 +84,18 @@ test("denial statements are machine-readable and parse", () => {
   }
 });
 
+test("no object id appears twice in the package", () => {
+  const d = load();
+  const seen = new Map();
+  const dupes = [];
+  for (const o of d) {
+    if (!o.id) continue;
+    if (seen.has(o.id)) dupes.push(`${o.id} (${o.name ?? o.type ?? "?"})`);
+    seen.set(o.id, o);
+  }
+  assert.deepEqual(dupes, []);
+});
+
 test("package boilerplate present with a fresh snapshot id", () => {
   const d = load();
   assert.equal(d[0]["@class"], "DataStreamHeader");
@@ -124,7 +135,7 @@ test("every child/reference id resolves to an object in the package", () => {
   assert.deepEqual(bad, []);
 });
 
-test("every comparison attribute id resolves and all nine rules exist", () => {
+test("every comparison attribute id resolves and all seven rules exist", () => {
   const d = load();
   const ids = new Set(d.filter((o) => o.id).map((o) => o.id));
   const rules = d.filter((o) => o.type === "Rule").map((o) => o.name).sort();
@@ -136,10 +147,17 @@ test("every comparison attribute id resolves and all nine rules exist", () => {
     "High-risk orders require portfolio:write scope",
     "Risky orders require approval bound to the transaction",
     "Default Deny",
-    "Access token is inactive",
   ]) {
     assert.ok(rules.includes(n), `missing rule ${n}`);
   }
+  // TV ships NO duplicate: the serving branch's Token Validation (and its
+  // shared inactive rule) already exist there; re-shipping either fails the
+  // merge's ValidPolicyReferences constraint. The GDP linkage is done after
+  // the merge (test.md §1.2 step 3), so no TV and no GDP appear here.
+  assert.ok(!rules.includes("Access token is inactive"), "shared TV rule must not ship");
+  assert.ok(!d.some((o) => o.type === "Policy" && o.name === "Token Validation"), "duplicate TV policy must not ship");
+  assert.ok(!d.some((o) => o.type === "PolicySet" && o.name === "Global Decision Point"), "GDP must not ship (attached post-merge)");
+  assert.ok(!d.some((o) => o.type === "PolicySet" && o.name === "APIM Mortgage MCP"), "mortgage set must not ship");
   // mirror comparisons: every attribute id on either side of any comparison must exist
   const byName = Object.fromEntries(d.filter((o) => o.objectType === "AttributeDefinition").map((o) => [o.name, o]));
   const cmpIds = [];
