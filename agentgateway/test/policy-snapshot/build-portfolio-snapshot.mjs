@@ -151,9 +151,11 @@ for (const s of Object.values(S)) out.push(s);
 
 // --- rules -----------------------------------------------------------------
 function rule(name, { description = "", condition = { empty: {} }, effectSettings, statementIds = [] }) {
-  const tmpl = M("Default Deny"); // shape template for a Rule
+  // Shape template: the typed lookup (the name "Default Deny" exists as both
+  // Policy and Rule, and the name map keeps the Policy).
+  const tmpl = mortgage.find((o) => o.type === "Rule" && o.name === "Default Deny");
   return {
-    ...tmpl,
+    ...structuredClone(tmpl),
     id: randomUUID(),
     version: randomUUID(),
     name,
@@ -188,7 +190,10 @@ const R_DELEGATION = rule("Deny non-VIP subject behind delegated agent", {
   statementIds: [S.delegationDenied.id],
 });
 
-// Policy 3 — Read tools: permit if portfolio:read in scope, else challenge
+// Policy 3 — Read tools: the rule's MAIN condition selects the tools only
+// (scope lives solely in effectSettings, as in the template — that placement
+// is what turns a scope miss into the insufficient_scope challenge instead
+// of a silent fall-through to Default Deny).
 const R_READ = rule("Allow portfolio read tools with portfolio:read scope", {
   condition: {
     and: {
@@ -200,7 +205,6 @@ const R_READ = rule("Allow portfolio read tools with portfolio:read scope", {
             ),
           },
         },
-        cmp(SHARED.scope, "Contains", { constant: { value: "portfolio:read" } }),
       ],
     },
   },
@@ -267,7 +271,12 @@ R_HIGH_MIRROR.effectSettings.condition = {
 // Policy 6 — Default Deny (shape copied from template, new ids)
 const R_DEFAULT = rule("Default Deny", { effectSettings: { type: "unconditionalDeny" } });
 
-// Token Validation — copy the template policy/rules but keep shared ids
+// Token Validation — copy the template policy/rules but keep shared ids.
+// The template's TV has exactly ONE rule child (Access token is inactive) and
+// carries "Invalid Token" in its statements list; its "Validate Audience"
+// rule is an ORPHAN (referenced by no policy) — the mortgage branch does not
+// enforce audience, so neither do we (mirroring the template prevents a
+// deny-everything surprise against the demo's aud).
 const TV_INACTIVE_RULE_SRC = M("Access token is inactive");
 const TV_INACTIVE_RULE = {
   ...TV_INACTIVE_RULE_SRC,
@@ -275,12 +284,9 @@ const TV_INACTIVE_RULE = {
   version: randomUUID(),
   name: "Access token is inactive",
 };
-const R_AUDIENCE = rule("Validate Audience", {
-  effectSettings: {
-    type: "conditionalPermitElseDeny",
-    condition: { and: { conditions: [cmp(SHARED.audience, "Equals", { attribute: { id: mId("MCP Audience") } })] } },
-  },
-});
+
+// Emit the rules themselves — Policies only reference them by id.
+for (const r of [TV_INACTIVE_RULE, R_SESSION, R_DELEGATION, R_READ, R_LOW, R_HIGH_SCOPE, R_HIGH_MIRROR, R_DEFAULT]) out.push(r);
 
 // --- policies (shape template: mortgage Policy objects) --------------------
 function policy(name, childIds, condition = { empty: {} }) {
@@ -316,25 +322,39 @@ const P_HIGH = policy("High Risk Orders with HITL", [R_HIGH_SCOPE.id, R_HIGH_MIR
 });
 
 const P_DEFAULT = policy("Default Deny", [R_DEFAULT.id]);
-const P_TOKEN_VALIDATION = policy("Token Validation", [TV_INACTIVE_RULE.id, R_AUDIENCE.id]);
+const P_TOKEN_VALIDATION = policy("Token Validation", [TV_INACTIVE_RULE.id]);
+// Mirror the template's TV: it carries the Invalid Token statement in its
+// statements list (the shape the Policy Editor expects for a policy-level
+// denial message when token validation fails).
+P_TOKEN_VALIDATION.statements = [mId("Invalid Token")];
 for (const p of [P_TOKEN_VALIDATION, P_SESSION, P_DELEGATION, P_READ, P_LOW, P_HIGH, P_DEFAULT]) out.push(p);
 
 // --- Token Validation's token-claim attributes (shared machinery) ----------
-// The inactive rule references condition definitions and attributes by the
-// mortgage ids; those objects must exist in the snapshot. Copy them verbatim
-// (same ids) from the template.
-const SHARED_OBJECT_NAMES = ["active", "scope", "audience", "act_sub", "sub_type", "AccessToken", "RequestBody", "MCP Audience", "Invalid Token", "Unauthorized Audience"];
+// The inactive rule and the claim-attribute resolver chains reference
+// condition definitions and attributes by the mortgage ids; those objects
+// must exist in the snapshot. Copy them verbatim (same ids) from the
+// template, including the parents the claim chain hangs off (HttpRequest,
+// Constants).
+const SHARED_OBJECT_NAMES = ["active", "scope", "audience", "act_sub", "sub_type", "AccessToken", "HttpRequest", "Constants", "RequestBody", "MCP Audience", "Invalid Token", "Unauthorized Audience"];
 for (const name of SHARED_OBJECT_NAMES) {
   const o = byName.get(name);
   if (o) out.push(structuredClone(o));
 }
-// Condition definitions referenced by the inactive rule (any object type the
-// rule references that we haven't produced yet): copy by id sweep.
+// Ref-sweep over EVERY emitted object (not just the inactive rule): any
+// referenced mortgage id that hasn't shipped yet — condition definitions and
+// the ActionDefinitions they point at — gets copied.
 const produced = new Set(out.map((o) => o.id));
-for (const ref of collectRefs(TV_INACTIVE_RULE)) {
-  if (!produced.has(ref)) {
+const sweep = [...out];
+for (let i = 0; i < sweep.length; i++) {
+  for (const ref of collectRefs(sweep[i])) {
+    if (produced.has(ref)) continue;
     const o = mortgage.find((x) => x.id === ref);
-    if (o) out.push(structuredClone(o));
+    if (o) {
+      const copy = structuredClone(o);
+      out.push(copy);
+      sweep.push(copy); // the copy may reference more objects
+      produced.add(ref);
+    }
   }
 }
 
@@ -378,7 +398,10 @@ out.push({
   id: randomUUID(),
   version: randomUUID(),
   name: "Global Decision Point",
-  children: [P_TOKEN_VALIDATION.id, { id: portfolioSetChildPlaceholder(), type: "PolicySet" }],
+  children: [
+    { id: P_TOKEN_VALIDATION.id, type: "Policy" },
+    { id: portfolioSetChildPlaceholder(), type: "PolicySet" },
+  ],
 });
 
 function portfolioSetChildPlaceholder() {
