@@ -10,11 +10,16 @@
 #
 # Usage:
 #   ./policy-e2e-tests.sh              # run the full matrix
+#   ./policy-e2e-tests.sh --verbose    # print request/response payloads and
+#                                      # pause for confirmation before each test
 #
 # Requirements: curl, jq
 # Environment overrides: APIM_URL, JWT_LAB, AUD (see below).
 
 set -u
+
+VERBOSE=0
+[ "${1:-}" = "--verbose" ] || [ "${1:-}" = "-v" ] && VERBOSE=1
 
 APIM_URL="${APIM_URL:-https://apimid4ai.azure-api.net/mortgage-mcp/mcp/mortgage}"
 JWT_LAB="${JWT_LAB:-https://jwt-lab-beta.vercel.app/api/token}"
@@ -98,15 +103,48 @@ run() { # run <label> <expect-code> <token> <body>
   # Retries on 502: APIM->PAZ sideband occasionally trips on a cold
   # connection (fragment returns "sideband-unavailable"); a retry proves the
   # outcome is policy-driven, not transport noise.
-  local out attempt
+  local out attempt body_file resp
+  if [ "$VERBOSE" = "1" ]; then
+    echo ""
+    echo "=== $1  (expected $2) ==="
+    echo "--- request ---"
+    echo "POST $APIM_URL"
+    jq . <<< "$4"
+    printf 'continue? [y/N]: '
+    read -r ans
+    case "$ans" in y|Y|yes) ;; *) echo "  SKIP (not run)"; return ;; esac
+  fi
+  body_file=$(mktemp)
+  printf '%s' "$4" > "$body_file"
   for attempt in 1 2 3; do
     out=$(curl -sk --max-time 40 -X POST "$APIM_URL" \
       -H "Content-Type: application/json" \
       -H "Accept: application/json, text/event-stream" \
       -H "Authorization: Bearer $3" \
-      -d "$4" -o /dev/null -w '%{http_code}' 2>&1)
+      -d @"$body_file" -o /dev/null -w '%{http_code}' 2>&1)
     [ "$out" != "502" ] && break
   done
+  if [ "$VERBOSE" = "1" ]; then
+    # re-issue capturing headers AND body in one go
+    local full hdr body resp_code
+    full=$(curl -sk --max-time 40 -i -X POST "$APIM_URL" \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/json, text/event-stream" \
+      -H "Authorization: Bearer $3" \
+      -d @"$body_file" 2>&1)
+    resp_code=$(printf '%s\n' "$full" | head -1 | awk '{print $2}')
+    out="$resp_code"
+    hdr=$(printf '%s\n' "$full" | sed -n '1,/^\r*$/p' | grep -i -E 'www-authenticate|content-type')
+    body=$(printf '%s\n' "$full" | sed '1,/^\r*$/d')
+    echo "--- response ($resp_code) ---"
+    [ -n "$hdr" ] && printf '%s\n' "$hdr"
+    if grep -q '^data: ' <<< "$body"; then
+      grep '^data: ' <<< "$body" | sed 's/^data: //' | jq . 2>/dev/null || cat <<< "$body"
+    else
+      jq . <<< "$body" 2>/dev/null || cat <<< "$body"
+    fi
+  fi
+  rm -f "$body_file"
   report "$1" "$2" "$out"
 }
 
