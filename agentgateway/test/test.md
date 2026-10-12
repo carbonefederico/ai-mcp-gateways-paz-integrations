@@ -141,7 +141,7 @@ cd ~/Documents/projects/ai/demo-mcp && git checkout amount-param && npm run dev 
 # 2.2 the adapter
 cd <this-repo>/agentgateway
 cp .env.example .env            # fill SERVICE_URL + SECRET_HEADER_VALUE from §1.1
-npm start                        # :8082
+npm start                        # :8083 (LISTEN_PORT in .env)
 
 # 2.3 agentgateway
 /usr/local/bin/agentgateway -f src/agentgateway.yaml   # :3001

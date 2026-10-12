@@ -21,7 +21,7 @@ routes:
                 host: http://localhost:3000/mcp/portfolio
     policies:
       extAuthz:
-        host: localhost:8082 # the PAZ sideband adapter (gRPC)
+        host: localhost:8083 # the PAZ sideband adapter (gRPC; .env LISTEN_PORT)
         failureMode: deny # fail closed on callout failure
         protocol:
           grpc: {}

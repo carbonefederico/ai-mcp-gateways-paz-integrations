@@ -92,7 +92,8 @@ The gateway side is [`src/agentgateway.yaml`](src/agentgateway.yaml)
 
 - **`/portfolio`** — the MCP route: proxies
   `http://localhost:3000/mcp/portfolio` with the `extAuthz` policy attached
-  (gRPC to `localhost:8082`, `failureMode: deny`, request body forwarded up
+  (gRPC to `localhost:8083` — `LISTEN_PORT` in `.env`, the code default is
+  8082; `failureMode: deny`, request body forwarded up
   to 64 KiB, 5s callout budget).
 - **`/.well-known/oauth-protected-resource`** — plain HTTP passthrough to
   demo-mcp, which serves the RFC 9728 protected-resource metadata document;
@@ -110,7 +111,7 @@ is open — see the disclaimer in `test/test.md`), no decision caching
 
 ```bash
 cd ~/Documents/projects/ai/demo-mcp && npm run dev        # 1. the MCP backend  :3000
-cd agentgateway && cp .env.example .env && npm start      # 2. the adapter       :8082
+cd agentgateway && cp .env.example .env && npm start      # 2. the adapter       :8083 (LISTEN_PORT)
 /usr/local/bin/agentgateway -f src/agentgateway.yaml      # 3. the gateway       :3001
 ```
 
