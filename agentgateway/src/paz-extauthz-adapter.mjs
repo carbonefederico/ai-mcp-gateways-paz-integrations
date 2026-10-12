@@ -36,3 +36,76 @@ export function buildSidebandEnvelope(checkRequest) {
     body,
   };
 }
+
+export function loadConfig(env = process.env) {
+  const serviceUrl = env.SERVICE_URL?.replace(/\/+$/, "");
+  const secretHeaderValue = env.SECRET_HEADER_VALUE;
+  if (!serviceUrl) throw new Error("SERVICE_URL environment variable is required");
+  if (!secretHeaderValue) throw new Error("SECRET_HEADER_VALUE environment variable is required");
+  const parsed = Number.parseInt(env.SIDEBAND_TIMEOUT_MS ?? "", 10);
+  return {
+    serviceUrl,
+    secretHeaderValue,
+    timeoutMs: Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 5000,
+    debugLogging: /^(1|true|yes|on)$/i.test(env.DEBUG_LOGGING ?? ""),
+    listenPort: Number.parseInt(env.LISTEN_PORT ?? "", 10) || 8082,
+  };
+}
+
+async function fetchJsonWithTimeout(config, path, payload, fetchImpl) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+  try {
+    const response = await fetchImpl(`${config.serviceUrl}${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        "PDG-TOKEN": config.secretHeaderValue,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    const rawBody = await response.text();
+    let body;
+    try {
+      body = rawBody ? JSON.parse(rawBody) : null;
+    } catch {
+      body = null;
+    }
+    return { response, body };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const retryDelaysMs = [0, 1000]; // one immediate retry, then one after 1s — the probe is idempotent
+
+export async function callSideband(config, envelope, fetchImpl = globalThis.fetch) {
+  const started = performance.now();
+  let lastError = null;
+
+  for (let attempt = 0; attempt < retryDelaysMs.length + 1; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, retryDelaysMs[attempt - 1]));
+    try {
+      const { response, body } = await fetchJsonWithTimeout(config, "/sideband/request", envelope, fetchImpl);
+      const elapsedMs = Math.round(performance.now() - started);
+      if (response.status === 200) {
+        return body?.response
+          ? { kind: "deny", body: body.response, elapsedMs }
+          : { kind: "permit", body, elapsedMs };
+      }
+      return { kind: "error", status: 502, message: `Sideband error (HTTP ${response.status})`, elapsedMs };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  const detail = lastError?.name === "AbortError" ? "request timed out" : lastError?.message;
+  return {
+    kind: "error",
+    status: 502,
+    message: `Sideband unavailable${detail ? `: ${detail}` : ""}`,
+    elapsedMs: Math.round(performance.now() - started),
+  };
+}
