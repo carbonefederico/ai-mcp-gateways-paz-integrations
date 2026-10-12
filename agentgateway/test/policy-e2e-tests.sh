@@ -21,7 +21,7 @@ set -u
 VERBOSE=0
 [ "${1:-}" = "--verbose" ] || [ "${1:-}" = "-v" ] && VERBOSE=1
 
-AG_URL="${AG_URL:-http://localhost:3001/portfolio}"
+AG_URL="${AG_URL:-http://localhost:3001/mcp}"
 JWT_LAB="${JWT_LAB:-https://jwt-lab-beta.vercel.app/api/token}"
 AUD="${AUD:-http://localhost:3001}"
 

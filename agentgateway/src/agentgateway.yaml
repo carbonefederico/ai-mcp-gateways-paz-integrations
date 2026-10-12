@@ -1,49 +1,46 @@
 # yaml-language-server: $schema=https://agentgateway.dev/schema/config
-# Routing-based mode: the simplified `mcp:` form cannot forward the
-# /.well-known/oauth-protected-resource route to the backend, so the metadata
-# route is declared explicitly below (same reason APIM needed a second API).
+# Simplified MCP mode (top-level `mcp:` block): serves the aggregated MCP
+# endpoint at /mcp and /sse on the gateway below, and is the form the
+# management UI's MCP page (targets, playground, capability toggle) reads and
+# writes. extAuthz attaches under mcp.policies — same PAZ chain as the
+# routing-based form, which this block replaces.
 gateways:
   default:
-    port: 3001 # demo-mcp owns :3000
+    port: 3001
     protocol: HTTP
-
+mcp:
+  targets:
+  - name: portfolio
+    mcp:
+      host: http://localhost:3000/mcp/portfolio
+  policies:
+    extAuthz:
+      host: localhost:8083
+      failureMode: deny
+      protocol:
+        grpc: {}
+      includeRequestBody:
+        maxRequestBytes: 65536
+        allowPartialMessage: false
+      policies:
+        http:
+          requestTimeout: 5s
 routes:
-  # 1. The MCP route — the only place extAuthz attaches.
-  - name: portfolio-mcp
-    matches:
-      - path:
-          pathPrefix: /portfolio
-    backends:
-      - mcp:
-          targets:
-            - name: portfolio
-              mcp:
-                host: http://localhost:3000/mcp/portfolio
-    policies:
-      extAuthz:
-        host: localhost:8083 # the PAZ sideband adapter (gRPC; .env LISTEN_PORT)
-        failureMode: deny # fail closed on callout failure
-        protocol:
-          grpc: {}
-        # With includeRequestHeaders unset, gRPC forwards ALL request headers
-        # — same as APIM copying every header into the envelope.
-        includeRequestBody:
-          maxRequestBytes: 65536
-          allowPartialMessage: false # oversized bodies reject, never partial-auth
-        policies:
-          http:
-            requestTimeout: "5s" # extAuthz callout budget (default 2s)
-
-  # 2. The metadata route — plain HTTP passthrough to demo-mcp, which serves
-  #    the RFC 9728 document at the path-preserved well-known location.
-  - name: mcp-metadata
-    matches:
-      - path:
-          pathPrefix: /.well-known/oauth-protected-resource
-    backends:
-      - host: localhost:3000
-    policies:
-      requestHeaderModifier:
-        set:
-          x-client-host: localhost:3001
-          x-client-proto: http
+# RFC 9728 protected-resource metadata — plain HTTP passthrough to demo-mcp.
+# The backend handler derives the protected resource from the request path,
+# which must end in /mcp/<endpoint>; rewrite the client-facing suffix
+# (/portfolio) to that form before forwarding.
+- name: mcp-metadata
+  matches:
+  - path:
+      pathPrefix: /.well-known/oauth-protected-resource/portfolio
+  backends:
+  - host: localhost:3000
+  policies:
+    urlRewrite:
+      path:
+        full: /.well-known/oauth-protected-resource/mcp/portfolio
+    requestHeaderModifier:
+      set:
+        x-client-host: localhost:3001
+        x-client-proto: http

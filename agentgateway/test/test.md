@@ -135,8 +135,8 @@ same branch's audit trail (the two-teams-one-PDP story, visible).
 Three terminals:
 
 ```bash
-# 2.1 demo-mcp (with the amount branch checked out)
-cd ~/Documents/projects/ai/demo-mcp && git checkout amount-param && npm run dev   # :3000
+# 2.1 demo-mcp (the amount support is on main since commit bae8d49)
+cd ~/Documents/projects/ai/demo-mcp && npm run dev   # :3000
 
 # 2.2 the adapter
 cd <this-repo>/agentgateway
@@ -151,14 +151,14 @@ npm start                        # :8083 (LISTEN_PORT in .env)
 
 ```bash
 # a) tokenless call must be rejected (chain live, fail-closed):
-curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:3001/portfolio \
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:3001/mcp \
   -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
 # expect 401; a 200 here means the chain is not enforcing
 
 # b) protected-resource metadata served through agentgateway:
 curl -s http://localhost:3001/.well-known/oauth-protected-resource/portfolio
-# "resource" must read http://localhost:3001/portfolio (client-facing), not
+# "resource" must read http://localhost:3001/mcp/portfolio (client-facing), not
 # the backend's localhost:3000 — that is what the X-Client-Host/X-Client-Proto
 # headers on the metadata route are for.
 

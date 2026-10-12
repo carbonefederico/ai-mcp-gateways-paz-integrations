@@ -88,16 +88,19 @@ see [`.env.example`](.env.example)):
 | `LISTEN_PORT` | adapter gRPC listen port | `8082` |
 
 The gateway side is [`src/agentgateway.yaml`](src/agentgateway.yaml)
-(routing-based mode, validated with `agentgateway --validate-only`):
+(simplified MCP mode — the top-level `mcp:` block, which is also the form
+the management UI's MCP page reads and writes — validated with
+`agentgateway --validate-only`):
 
-- **`/portfolio`** — the MCP route: proxies
-  `http://localhost:3000/mcp/portfolio` with the `extAuthz` policy attached
-  (gRPC to `localhost:8083` — `LISTEN_PORT` in `.env`, the code default is
-  8082; `failureMode: deny`, request body forwarded up
+- **`/mcp`** (and `/sse`) — the aggregated MCP endpoint: proxies
+  `http://localhost:3000/mcp/portfolio` with `extAuthz` attached under
+  `mcp.policies` (gRPC to `localhost:8083` — `LISTEN_PORT` in `.env`, the
+  code default is 8082; `failureMode: deny`, request body forwarded up
   to 64 KiB, 5s callout budget).
 - **`/.well-known/oauth-protected-resource`** — plain HTTP passthrough to
   demo-mcp, which serves the RFC 9728 protected-resource metadata document;
-  the route injects `X-Client-Host`/`X-Client-Proto` so the backend builds
+  the route rewrites the client-facing suffix to the backend's expected
+  path and injects `X-Client-Host`/`X-Client-Proto` so the backend builds
   the client-facing `resource` identifier (RFC 8707). The same reason APIM
   needed a second, plain API for metadata.
 
@@ -115,7 +118,8 @@ cd agentgateway && cp .env.example .env && npm start      # 2. the adapter      
 /usr/local/bin/agentgateway -f src/agentgateway.yaml      # 3. the gateway       :3001
 ```
 
-Then point an MCP client at `http://localhost:3001/portfolio`.
+Then point an MCP client at `http://localhost:3001/mcp` (management UI at
+`http://localhost:15000/ui`).
 
 ## Pointing at the policies
 
