@@ -109,3 +109,49 @@ export async function callSideband(config, envelope, fetchImpl = globalThis.fetc
     elapsedMs: Math.round(performance.now() - started),
   };
 }
+
+function rpcId(originalBodyText) {
+  if (!originalBodyText) return null;
+  try {
+    return JSON.parse(originalBodyText)?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function jsonRpcErrorBody(originalBodyText, statusCode, message) {
+  const code = statusCode === 401 ? -32001 : statusCode === 403 ? -32003 : -32603;
+  return JSON.stringify({ jsonrpc: "2.0", id: rpcId(originalBodyText), error: { code, message } });
+}
+
+// Envoy wants camelCase through proto-loader; HttpStatus.code is the shared
+// enum, numeric. gRPC status 7 = PERMISSION_DENIED (any nonzero denies).
+function headerOptions(headerArray) {
+  return (headerArray ?? []).map((entry) => {
+    const [key, value] = Object.entries(entry ?? {})[0] ?? ["content-type", "application/json"];
+    return { header: { key: String(key).toLowerCase(), value: String(value) } };
+  });
+}
+
+export function toCheckResponse(result, originalBodyText) {
+  if (result.kind === "permit") {
+    return { status: { code: 0 } };
+  }
+
+  const isDeny = result.kind === "deny";
+  const denyBody = isDeny ? result.body ?? {} : {};
+  const statusCode = Number.parseInt(denyBody.response_code ?? result.status ?? 403, 10) || 403;
+  const body =
+    denyBody.body != null && denyBody.body !== ""
+      ? denyBody.body
+      : jsonRpcErrorBody(originalBodyText, statusCode, isDeny ? "Access denied" : (result.message ?? "Authorization failed"));
+
+  return {
+    status: { code: 7 },
+    deniedResponse: {
+      status: { code: statusCode },
+      headers: headerOptions(denyBody.headers),
+      body,
+    },
+  };
+}
