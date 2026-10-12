@@ -9,7 +9,7 @@
   },
   "scripts": {
     "test": "node --test 'test/*.test.mjs'",
-    "start": "node src/paz-extauthz-adapter.mjs"
+    "start": "node --env-file-if-exists=.env src/paz-extauthz-adapter.mjs"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.12.0",

@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+# Routing-based mode: the simplified `mcp:` form cannot forward the
+# /.well-known/oauth-protected-resource route to the backend, so the metadata
+# route is declared explicitly below (same reason APIM needed a second API).
+gateways:
+  default:
+    port: 3001 # demo-mcp owns :3000
+    protocol: HTTP
+
+routes:
+  # 1. The MCP route — the only place extAuthz attaches.
+  - name: portfolio-mcp
+    matches:
+      - path:
+          pathPrefix: /portfolio
+    backends:
+      - mcp:
+          targets:
+            - name: portfolio
+              mcp:
+                host: http://localhost:3000/mcp/portfolio
+    policies:
+      extAuthz:
+        host: localhost:8082 # the PAZ sideband adapter (gRPC)
+        failureMode: deny # fail closed on callout failure
+        protocol:
+          grpc: {}
+        # With includeRequestHeaders unset, gRPC forwards ALL request headers
+        # — same as APIM copying every header into the envelope.
+        includeRequestBody:
+          maxRequestBytes: 65536
+          allowPartialMessage: false # oversized bodies reject, never partial-auth
+        policies:
+          http:
+            requestTimeout: "5s" # extAuthz callout budget (default 2s)
+
+  # 2. The metadata route — plain HTTP passthrough to demo-mcp, which serves
+  #    the RFC 9728 document at the path-preserved well-known location.
+  - name: mcp-metadata
+    matches:
+      - path:
+          pathPrefix: /.well-known/oauth-protected-resource
+    backends:
+      - host: localhost:3000
+    policies:
+      requestHeaderModifier:
+        set:
+          x-client-host: localhost:3001
+          x-client-proto: http
