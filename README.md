@@ -1,8 +1,7 @@
 # Ping Authorize — MCP Gateway Integrations
 
 This repository contains the Ping Authorize integration artifacts for MCP
-gateways, as described in the blog series on centralizing MCP authorization
-across cloud platforms.
+gateways.
 
 Each gateway integration uses Ping Authorize (PingOne Authorize in the cloud
 or self-hosted PingAuthorize) as the centralized Policy Decision Point (PDP).
@@ -17,8 +16,7 @@ both products, so the same gateway artifacts work with either.
 | Folder | Contents |
 |---|---|
 | [`azure-apim/`](azure-apim/) | **Azure API Management integration** — the sideband policy fragment (PEP), the exported PingAuthorize policy set (session methods, VIP delegation gate, payload-risk-tiered HITL changes bound to a `txn` transaction id, default deny), a 16-test end-to-end harness, and guides: main README (fragment + policies) and [test/test.md](azure-apim/test/test.md) (sample MCP, policies, local setup, tests). |
-| `aws-agentcore-mcp-gateway/` | AWS AgentCore MCP gateway integration (in progress). |
-| `test-scripts/` | Scratch scripts used during development (OIDC token-exchange experiments, sideband probes). |
+| [`agentgateway/`](agentgateway/) | **agentgateway integration** — the Envoy ext_authz ⇄ sideband gRPC adapter (PEP), the agentgateway standalone config, the portfolio policy snapshot (generated from the mortgage template; `amount`-tiered HITL with a six-field transaction mirror), a 19-test e2e harness, and guides: main README (adapter + config) and [test/test.md](agentgateway/test/test.md) (sample MCP, policies, local setup, tests). |
 
 Start here for the working, tested integration: [`azure-apim/README.md`](azure-apim/README.md).
 
