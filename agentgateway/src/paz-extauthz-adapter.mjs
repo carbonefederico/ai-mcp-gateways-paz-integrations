@@ -155,3 +155,57 @@ export function toCheckResponse(result, originalBodyText) {
     },
   };
 }
+
+import grpc from "@grpc/grpc-js";
+import protoLoader from "@grpc/proto-loader";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const protoDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "proto");
+
+export function createCheckHandler(config, fetchImpl = globalThis.fetch) {
+  return async (call, callback) => {
+    try {
+      const envelope = buildSidebandEnvelope(call.request);
+      const originalBodyText = envelope.body ?? "";
+      if (config.debugLogging) {
+        console.debug(`[DEBUG] ext_authz Check: ${JSON.stringify({ ...envelope, headers: envelope.headers.map(redactHeader) })}`);
+      }
+      const result = await callSideband(config, envelope, fetchImpl);
+      if (config.debugLogging) {
+        console.debug(`[DEBUG] sideband ${result.kind} in ${result.elapsedMs ?? "?"}ms`);
+      }
+      callback(null, toCheckResponse(result, originalBodyText));
+    } catch (error) {
+      // Any adapter failure must surface as a gRPC error so agentgateway's
+      // failureMode: deny keeps the request closed.
+      callback({ code: grpc.status.INTERNAL, message: error?.message ?? "adapter failure" });
+    }
+  };
+}
+
+function redactHeader(entry) {
+  const [key, value] = Object.entries(entry)[0] ?? [];
+  return { [key]: /authorization|cookie|pdg-token|token/i.test(key) ? "<redacted>" : value };
+}
+
+export async function main() {
+  const config = loadConfig();
+  const def = await protoLoader.load(path.join(protoDir, "ext_authz.proto"), { includeDirs: [protoDir], keepCase: false });
+  const pkg = grpc.loadPackageDefinition(def);
+  const server = new grpc.Server();
+  server.addService(pkg.envoy.service.auth.v3.Authorization.service, { Check: createCheckHandler(config) });
+  await new Promise((resolve, reject) => {
+    server.bindAsync(`0.0.0.0:${config.listenPort}`, grpc.ServerCredentials.createInsecure(), (err, bound) =>
+      err ? reject(err) : resolve(bound),
+    );
+  });
+  console.log(`paz-extauthz-adapter listening on :${config.listenPort} -> ${config.serviceUrl}/sideband/request`);
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
