@@ -55,7 +55,7 @@ const REQUEST_BODY_ID = mId("RequestBody");
 function reuseId(name) {
   return byName.get(name)?.id ?? randomUUID();
 }
-function mcpAttr(name, expression, valueType) {
+function mcpAttr(name, expression, valueType, defaultValue = "_null") {
   const tmpl = M("MCP Tool Name");
   return {
     ...tmpl,
@@ -64,7 +64,7 @@ function mcpAttr(name, expression, valueType) {
     name,
     fullName: name,
     valueType,
-    defaultValue: "_null",
+    defaultValue,
     resolvers: [{ ...tmpl.resolvers[0], id: REQUEST_BODY_ID }],
     valueProcessor: { ...tmpl.valueProcessor, expression, valueType, name },
   };
@@ -74,7 +74,12 @@ const A = {
   method: mcpAttr("MCP Method", "$.method", "STRING"),
   tool: mcpAttr("MCP Tool Name", "$.params.name", "STRING"),
   txn: mcpAttr("MCP Transaction Id", "$.params.arguments.txn", "STRING"),
-  amount: mcpAttr("MCP Amount", "$.params.arguments.amount", "NUMBER"),
+  // NUMBER + default "0": an ABSENT amount must resolve to a real number.
+  // With "_null" the numeric resolution errors and the high-risk policy's
+  // GreaterThan aborts the whole condition evaluation to default-deny
+  // (observed live: absent-amount orders denied even with the NotEquals
+  // guard). "0" keeps absent = low risk through the normal fall-through.
+  amount: mcpAttr("MCP Amount", "$.params.arguments.amount", "NUMBER", "0"),
   amountS: mcpAttr("MCP Amount Mirror", "$.params.arguments.amount", "STRING"),
   customer: mcpAttr("MCP Customer Id", "$.params.arguments.customerId", "STRING"),
   symbol: mcpAttr("MCP Symbol", "$.params.arguments.symbol", "STRING"),
@@ -228,9 +233,12 @@ const R_READ = rule("Allow portfolio read tools with portfolio:read scope", {
   statementIds: [S.readChallenge.id],
 });
 
-// Policy 4 — Low-risk orders: any submit_trade_order that is NOT high-risk
-// (no amount condition — FirstApplicable ordering handles the tiering, and
-// absent amount ⇒ low risk). Permit if portfolio:write in scope, else challenge.
+// Policy 4 — Low-risk orders: any submit_trade_order (scope checked in
+// effectSettings; absent amount ⇒ low risk). The set evaluates policies
+// FirstApplicable, so the HIGH-RISK policy must come FIRST in the children
+// list (high selects on amount > 10000, low matches every order); ordering
+// low first made it swallow high-risk orders (observed live: a 50k order
+// without approval PERMITTED).
 const R_LOW = rule("Allow low risk orders with portfolio:write scope", {
   condition: { and: { conditions: [cmp(A.tool.id, "Equals", { constant: { value: "submit_trade_order" } })] } },
   effectSettings: {
@@ -310,11 +318,17 @@ const P_DELEGATION = policy("Allow Delegated Token by VIP Users Only", [R_DELEGA
 const P_READ = policy("Allow read operations", [R_READ.id]);
 const P_LOW = policy("Allow low risk orders", [R_LOW.id]);
 
-// High Risk Orders with HITL: policy-level condition selects tool + amount>10000
+// High Risk Orders with HITL: policy-level condition selects tool + amount>10000.
+// The NotEquals-_null guard is load-bearing: with an ABSENT amount the attribute
+// resolves to the "_null" sentinel, and a numeric GreaterThan against it aborts
+// the whole policy evaluation to default-deny (observed live: absent-amount
+// orders were denied with the generic Access Denied after the high policy moved
+// before low). The guard keeps absent-amount orders falling through to low.
 const P_HIGH = policy("High Risk Orders with HITL", [R_HIGH_SCOPE.id, R_HIGH_MIRROR.id], {
   and: {
     conditions: [
       cmp(A.tool.id, "Equals", { constant: { value: "submit_trade_order" } }),
+      cmp(A.amount.id, "NotEquals", NULL),
       cmp(A.amount.id, "GreaterThan", { constant: { value: 10000 } }),
     ],
   },
@@ -368,7 +382,10 @@ out.push({
   name: "AgentGateway Portfolio MCP",
   // TV is owned by the Global Decision Point alone (template layout) — a
   // policy with two parents fails the import's constraint checks.
-  children: [P_SESSION.id, P_DELEGATION.id, P_READ.id, P_LOW.id, P_HIGH.id, P_DEFAULT.id].map((id) => ({ id, type: "Policy" })),
+  // High-risk BEFORE low-risk (FirstApplicable): high selects on the amount
+  // condition, so only >10000 orders reach its rules; everything else —
+  // including absent amount — falls through to the low-risk policy.
+  children: [P_SESSION.id, P_DELEGATION.id, P_READ.id, P_HIGH.id, P_LOW.id, P_DEFAULT.id].map((id) => ({ id, type: "Policy" })),
   targets: [TARGET_ID],
 });
 

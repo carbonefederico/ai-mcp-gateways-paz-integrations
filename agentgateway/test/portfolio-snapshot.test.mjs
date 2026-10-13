@@ -31,6 +31,17 @@ test("service and policy sets are portfolio-shaped (the GDP attaches post-merge)
   assert.deepEqual(sets, ["AgentGateway Portfolio MCP"]);
 });
 
+test("high-risk policy precedes low-risk in the set (FirstApplicable tiering)", () => {
+  const d = load();
+  const set = d.find((o) => o.type === "PolicySet" && o.name === "AgentGateway Portfolio MCP");
+  const byId = Object.fromEntries(d.filter((o) => o.id).map((o) => [o.id, o]));
+  const names = set.children.map((c) => byId[c.id]?.name);
+  // The low-risk rule matches EVERY submit_trade_order; if it ran before the
+  // high-risk policy, high-risk orders would be permitted without approval.
+  assert.ok(names.indexOf("High Risk Orders with HITL") < names.indexOf("Allow low risk orders"),
+    `high must precede low, got: ${names.join(", ")}`);
+});
+
 test("policy roster matches the six-policy pattern (no TV, no GDP)", () => {
   const d = load();
   const names = d.filter((o) => o.type === "Policy").map((o) => o.name).sort();
@@ -54,6 +65,7 @@ test("MCP attributes point at portfolio JSONPaths; amount exists twice (NUMBER +
   assert.equal(jp("MCP Side"), "$.params.arguments.side");
   assert.equal(jp("MCP Quantity"), "$.params.arguments.quantity");
   assert.equal(byName["MCP Amount"].valueProcessor.valueType, "NUMBER");
+  assert.equal(byName["MCP Amount"].defaultValue, "0", "NUMBER amount must default to 0: the _null sentinel breaks numeric resolution and aborts the high-risk condition to default-deny");
   assert.equal(byName["MCP Amount Mirror"].valueProcessor.valueType, "STRING");
   for (const n of ["MCP Amount", "MCP Customer Id", "MCP Symbol", "MCP Side", "MCP Quantity"]) {
     assert.ok(!byName[n].parentId, `${n} must resolve from the request body, not a parent`);
@@ -198,6 +210,11 @@ test("high-risk tiering sits in the policy condition; read rule keeps scope only
   const gtAttr = byId[gt[0].left?.attribute?.id];
   assert.equal(gtAttr?.valueProcessor?.valueType, "NUMBER", "GreaterThan must run on the NUMBER attribute");
   assert.equal(gt[0].right?.constant?.value, 10000, "threshold must be 10000");
+  // absent amount ⇒ "_null" sentinel; a numeric GreaterThan against it aborts
+  // evaluation to default-deny. The NotEquals-_null guard must sit in the same
+  // and{} so the numeric compare only runs when a real amount was sent.
+  const neqNull = comparisons.filter((c) => c.op === "NotEquals" && c.right?.constant?.value === "_null" && c.left?.attribute?.id === gtAttr.id);
+  assert.equal(neqNull.length, 1, "high-risk condition needs a NotEquals-_null guard on the amount attribute before GreaterThan");
   // read rule: main condition has tool selection only; scope lives in effectSettings
   const read = byName["Allow portfolio read tools with portfolio:read scope"];
   assert.ok(!JSON.stringify(read.condition).includes("portfolio:read"), "scope must NOT be in the read rule's main condition");
