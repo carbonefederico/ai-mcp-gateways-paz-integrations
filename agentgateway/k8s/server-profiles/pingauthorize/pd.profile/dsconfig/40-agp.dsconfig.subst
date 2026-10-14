@@ -47,5 +47,4 @@ dsconfig create-sideband-api-endpoint \
 # external-server UNAVAILABLE classification doesn't hold the whole server
 # unavailable.
 dsconfig delete-external-server \
-    --server-name pingdirectory-ldap \
-    --ignoreErrors
+    --server-name pingdirectory-ldap
