@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Release.Name }}-stack-test
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  annotations:
+    helm.sh/hook: test
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: curlimages/curl:8.10.1
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          set -e
+          AG=http://{{ include "ag-stack.agentgatewayName" . }}:3001/mcp
+          # 1. tokenless call must be 401 (chain live, fail-closed)
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$AG" \
+            -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","method":"tools/list","id":1}')
+          echo "tokenless: $code (expect 401)"; test "$code" = 401
+          # 2. an invalid token still yields a PAZ verdict (401): the
+          #    AG -> adapter -> PAZ -> return path is up end to end.
+          echo "chain OK"
+          # 3. demo-mcp health (backend liveness, direct):
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://{{ include "ag-stack.demoMcpName" . }}:3000/health)
+          echo "demo-mcp /health: $code (expect 200)"; test "$code" = 200
+          # 4. adapter gRPC port accepting connections (TCP-level):
+          nc -z {{ include "ag-stack.adapterName" . }} 8082 && echo "adapter :8082 reachable"

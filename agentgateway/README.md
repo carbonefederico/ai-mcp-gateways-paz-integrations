@@ -11,6 +11,34 @@ the adapter POSTs the original request to the authorization server's sideband
 endpoint, and the decision — permit, deny with a machine-readable reason, or
 deny-with-challenge for human-in-the-loop flows — is enforced, fail-closed.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    client["MCP clients"]
+    agw["agentgateway — PEP<br/>:3001 /mcp"]
+    adapter["paz-extauthz-adapter<br/>separate Node process<br/>gRPC :8083"]
+    paz["Ping Authorize / PingOne Authorize<br/>Policy Decision Point (PDP)"]
+    backend["MCP backend<br/>:3000"]
+
+    client -- "MCP call" --> agw
+    agw -- "extAuthz policy<br/>Authorization/Check" --> adapter
+    adapter -- "sideband envelope<br/>POST /sideband/request<br/>(PDG-TOKEN)" --> paz
+    paz -- "permit / deny /<br/>deny-with-challenge" --> adapter
+    adapter -- "allow or PAZ denial" --> agw
+    agw -- "on permit" --> backend
+```
+
+The adapter is **not** part of the agentgateway binary: it runs as its own
+process (`npm start`), and agentgateway's extAuthz policy simply points at it
+over gRPC on `:8083` (`LISTEN_PORT`). Locally the two run side by side, but
+the adapter can be deployed anywhere reachable — it speaks the vendored Envoy
+ext_authz contract, so any Envoy-compatible PEP can use it.
+
+Fail-closed throughout: a sideband transport failure or non-200 PDP response
+becomes a 502 (`sideband-unavailable` / `sideband-error`), and
+`failureMode: deny` covers an adapter outage.
+
 ---
 
 ## Folder layout
@@ -133,9 +161,37 @@ sideband configuration, and the full test walkthrough are in
 policies ported to the portfolio MCP (`amount`-tiered HITL with a six-field
 transaction mirror), the PAZ setup, the local wiring, and the 19-test matrix.
 
-## Out of scope / next phase
+## Kubernetes deployment (self-contained stack)
 
-A full Kubernetes deployment. The adapter is container-runnable as-is
-(`node src/paz-extauthz-adapter.mjs` + env vars); in k8s, agentgateway's
-controller-mode `extAuth` policy and any Envoy/Istio PEP speak the same
-vendored `Authorization/Check` contract this adapter implements.
+`k8s/helm/agentgateway-stack/` deploys the whole chain into a single
+namespace: PAZ + PAP + PingDirectory (Ping chart, StatefulSets),
+paz-extauthz-adapter, agentgateway (standalone mode, config from ConfigMap),
+and demo-mcp. Policies, the jwt-lab token validator, and the sideband
+endpoint bootstrap automatically from the server profiles in
+`k8s/server-profiles/` (PAZ dsconfig layer + full-branch policy snapshot the
+PAP imports at first start — no manual Policy Editor steps).
+
+Public surface: the AG MCP endpoint (`agentgateway-stack-ag.ping-devops.com`)
+and the PAP UI (`agentgateway-stack-pap.ping-devops.com`), TLS via
+cert-manager (`letsencrypt-pdo`). Everything else is cluster-internal.
+
+Deploy (dev posture — `ping-devops.com` hosts, DevOps default credentials):
+
+    cd k8s/helm/agentgateway-stack
+    helm dependency update
+    helm install agentgateway-stack . -n ping-devops-fcarbone
+
+Operator steps: DNS records for the two hosts above → the cluster's
+nginx-public NLB. TLS issues automatically once DNS resolves.
+
+Verify:
+
+    helm test agentgateway-stack -n ping-devops-fcarbone   # wiring: 401/200/reachable
+    cd test && AG_URL=https://agentgateway-stack-ag.ping-devops.com/mcp \
+      AUD=https://agentgateway-stack-ag.ping-devops.com ./policy-e2e-tests.sh   # 19/19
+
+AG management UI: `kubectl port-forward -n ping-devops-fcarbone
+deploy/agentgateway-stack-agentgateway 15000:15000` (loopback-only port —
+never expose it; agentgateway docs forbid publishing the admin interface).
+
+The full Kubernetes deployment is now in `k8s/` (self-contained stack, above).
