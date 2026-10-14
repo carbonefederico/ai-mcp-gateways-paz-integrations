@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ag-stack.agentgatewayName" . }}-config
+  labels:
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  agentgateway.yaml: |
+    # Rendered from the chart — standalone config, mirrors src/agentgateway.yaml
+    # (simplified MCP mode, stateless) with cluster DNS instead of localhost.
+    gateways:
+      default:
+        port: 3001
+        protocol: HTTP
+    mcp:
+      statefulMode: stateless
+      targets:
+        - name: portfolio
+          mcp:
+            host: http://{{ include "ag-stack.demoMcpName" . }}:3000/mcp/portfolio
+      policies:
+        extAuthz:
+          host: {{ include "ag-stack.adapterName" . }}:8082
+          failureMode: deny
+          protocol:
+            grpc: {}
+          includeRequestBody:
+            maxRequestBytes: 65536
+            allowPartialMessage: false
+          policies:
+            http:
+              requestTimeout: 5s
+    routes:
+      - name: mcp-metadata
+        matches:
+          - path:
+              pathPrefix: /.well-known/oauth-protected-resource/portfolio
+        backends:
+          - host: http://{{ include "ag-stack.demoMcpName" . }}:3000
+        policies:
+          urlRewrite:
+            path:
+              full: /.well-known/oauth-protected-resource/mcp/portfolio
+          requestHeaderModifier:
+            set:
+              x-client-host: {{ .Values.agentgateway.publicHost }}
+              x-client-proto: https
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ag-stack.agentgatewayName" . }}
+  labels:
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agentgateway
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agentgateway
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: agentgateway
+          image: {{ .Values.agentgateway.image }}
+          imagePullPolicy: IfNotPresent
+          args: ["-f", "/config/agentgateway.yaml"]
+          ports:
+            - name: mcp
+              containerPort: 3001
+            - name: health
+              containerPort: 15021
+          readinessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: health
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 1, memory: 512Mi }
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "ag-stack.agentgatewayName" . }}-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ag-stack.agentgatewayName" . }}
+  labels:
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: mcp
+      port: 3001
+      targetPort: mcp
+    - name: health
+      port: 15021
+      targetPort: health
+  selector:
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+# Port 15000 (admin UI) is deliberately NOT in any Service — it binds to
+# loopback inside the pod (unauthenticated shutdown/dump endpoints; docs
+# forbid exposing it). Operator access:
+#   kubectl port-forward -n ping-devops-fcarbone pod/<ag-pod> 15000:15000
