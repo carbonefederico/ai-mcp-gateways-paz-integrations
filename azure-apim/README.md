@@ -10,6 +10,31 @@ call, forwards the original HTTP request to the authorization server's sideband
 endpoint, and enforces the decision — permit, deny with a machine-readable
 reason, or deny-with-challenge for human-in-the-loop flows.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    client["MCP client"]
+
+    subgraph pep["Azure API Management — Policy Enforcement Point (PEP)"]
+        apim["APIM<br/>MCP API"]
+        fragment["authorize-sideband-fragment<br/>AuthorizeSidebandAuthorization"]
+        apim -- "inbound policy" --> fragment
+    end
+
+    paz["Ping Authorize / PingOne Authorize<br/>Policy Decision Point (PDP)"]
+    backend["MCP backend"]
+
+    client -- "MCP call" --> apim
+    fragment -- "sideband envelope<br/>POST /sideband/request<br/>(PDG-TOKEN)" --> paz
+    paz -- "permit / deny /<br/>deny-with-challenge" --> fragment
+    apim -- "on permit" --> backend
+```
+
+Fail-closed: a sideband transport failure is retried twice, then returns
+`502 sideband-unavailable`; a non-200 PDP response returns
+`502 sideband-error`.
+
 ---
 
 ## Folder layout
