@@ -13,10 +13,22 @@
 // Decision Point keeps the name but gets a new id so importing cannot clobber
 // the serving branch's GDP — test.md instructs attaching the portfolio set
 // under the existing GDP after merge.
-import { readFileSync, writeFileSync } from "node:fs";
+//
+// --full-branch: emit a SECOND artifact (k8s/server-profiles/pingauthorizepap/
+// policies/…) that additionally ships the Token Validation policy set and a
+// Global Decision Point whose children are [TV, portfolio set] — the complete
+// branch a FRESH PAP imports at first start (hook 81). The merge variant's
+// output path and content are untouched in this mode.
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+const FULL_BRANCH = process.argv.includes("--full-branch");
+// Fixed GDP id: the PAZ profile layer (k8s/server-profiles/.../pd.profile)
+// pins its external-server decision-node wiring to this literal. DO NOT
+// randomize — the PAZ→PAP bootstrap must resolve the same node every import.
+const GDP_ID = "a7c4e2d0-8f11-4b5a-9c3d-6e8f2a1b4c7d";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const mortgagePath = path.join(here, "..", "..", "..", "azure-apim", "test", "policy-snapshot", "Mortgage MCP policies.snapshot");
@@ -375,9 +387,10 @@ const targetTemplate = firstNamed("Inline target");
 out.push({ ...targetTemplate, id: TARGET_ID, version: randomUUID(), targeted: { services: [SERVICE_ID] } });
 
 const portfolioSet = mortgage.find((o) => o.type === "PolicySet" && o.name === "APIM Mortgage MCP");
+const PORTFOLIO_SET_ID = randomUUID();
 out.push({
   ...structuredClone(portfolioSet),
-  id: randomUUID(),
+  id: PORTFOLIO_SET_ID,
   version: randomUUID(),
   name: "AgentGateway Portfolio MCP",
   // TV is owned by the Global Decision Point alone (template layout) — a
@@ -389,17 +402,38 @@ out.push({
   targets: [TARGET_ID],
 });
 
-// NO Global Decision Point and NO Token Validation ship in the snapshot —
+// NO Global Decision Point and NO Token Validation ship in the MERGE variant —
 // both already live in the serving branch, and re-shipping them either fails
 // the import (their children must resolve inside the package, dragging the
 // entire mortgage subtree along) or fails the merge (a fresh-id TV claiming
 // the shared inactive rule = two parents). Instead:
-//   1. this snapshot merges in the portfolio content (all fresh ids);
+//   1. the merge snapshot brings in the portfolio content (all fresh ids);
 //   2. test.md §1.2 step 3 (or the PAP admin API) attaches
 //      `AgentGateway Portfolio MCP` as a second PolicySet child of the
 //      serving branch's existing GDP — the same manual step the APIM
 //      integration documents.
 // The ref-sweep (below) closes the package over the objects above only.
+
+// --- full-branch variant: TV + GDP ship INSIDE the package -------------------
+// A FRESH PAP has no serving branch: the TV Policy here IS the only parent of
+// its inactive rule (no two-parent conflict), and the GDP links it to the
+// portfolio set with the fixed id the PAZ profile layer pins. Shape per the
+// live branch's export: GDP children = [{Token Validation, Policy},
+// {portfolio set, PolicySet}] — TV is a Policy, not a PolicySet. Everything
+// the TV references is pulled in verbatim by the ref-sweep below.
+if (FULL_BRANCH) {
+  const tvPolicy = structuredClone(mortgage.find((o) => o.type === "Policy" && o.name === "Token Validation"));
+  out.push(tvPolicy);
+  out.push({
+    ...structuredClone(mortgage.find((o) => o.type === "PolicySet" && o.name === "Global Decision Point")),
+    id: GDP_ID,
+    version: randomUUID(),
+    children: [
+      { id: tvPolicy.id, type: "Policy" },
+      { id: PORTFOLIO_SET_ID, type: "PolicySet" },
+    ],
+  });
+}
 
 // Ref-sweep over EVERY emitted object: any referenced mortgage id that
 // hasn't shipped yet — statements, condition definitions, the
@@ -458,6 +492,9 @@ for (const o of out) digest.update(JSON.stringify(o));
 const digestB64 = digest.digest("base64");
 out.push({ "@class": "DataStreamFooter", digest: digestB64 });
 
-const target = path.join(here, "Portfolio MCP policies.snapshot");
+const target = FULL_BRANCH
+  ? path.join(here, "..", "..", "k8s", "server-profiles", "pingauthorizepap", "policies", "Portfolio MCP policies.full-branch.SNAPSHOT")
+  : path.join(here, "Portfolio MCP policies.snapshot");
+mkdirSync(path.dirname(target), { recursive: true });
 writeFileSync(target, JSON.stringify(out));
 console.log(`wrote ${target} (${out.length} objects, digest ${digestB64.slice(0, 12)}…)`);

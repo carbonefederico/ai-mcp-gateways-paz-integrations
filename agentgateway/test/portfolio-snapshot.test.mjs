@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "policy-snapshot");
 const snapshotPath = path.join(dir, "Portfolio MCP policies.snapshot");
+const fullBranchPath = path.join(dir, "..", "..", "k8s", "server-profiles", "pingauthorizepap", "policies", "Portfolio MCP policies.full-branch.SNAPSHOT");
 
 function load() {
   return JSON.parse(readFileSync(snapshotPath, "utf8"));
@@ -219,4 +220,70 @@ test("high-risk tiering sits in the policy condition; read rule keeps scope only
   const read = byName["Allow portfolio read tools with portfolio:read scope"];
   assert.ok(!JSON.stringify(read.condition).includes("portfolio:read"), "scope must NOT be in the read rule's main condition");
   assert.ok(JSON.stringify(read.effectSettings.condition).includes("portfolio:read"), "scope must be in the read rule's effectSettings");
+});
+
+// --- full-branch mode (k8s bootstrap): the generator writes a SECOND artifact
+// with TV + GDP included, so a fresh PAP can auto-import a complete branch.
+
+test("full-branch: generator runs and produces the full-branch snapshot", () => {
+  execFileSync("node", [path.join(dir, "build-portfolio-snapshot.mjs"), "--full-branch"], { stdio: "inherit" });
+  assert.ok(existsSync(fullBranchPath));
+});
+
+test("full-branch: GDP with fixed id and TV(Policy)+portfolio(PolicySet) children", () => {
+  const snap = JSON.parse(readFileSync(fullBranchPath, "utf8"));
+  const gdp = snap.find((o) => o.name === "Global Decision Point" && o.type === "PolicySet");
+  assert.ok(gdp, "GDP missing");
+  assert.equal(gdp.id, "a7c4e2d0-8f11-4b5a-9c3d-6e8f2a1b4c7d", "GDP id must be the fixed bootstrap literal");
+  // Ground truth from the live branch's export: TV is a POLICY (id kept from
+  // the template), the portfolio set is a PolicySet.
+  assert.deepEqual(gdp.children.map((c) => c.type), ["Policy", "PolicySet"]);
+  const tv = snap.find((o) => o.id === gdp.children[0].id);
+  assert.ok(tv?.name === "Token Validation" && tv?.type === "Policy", "TV child missing or wrong type");
+  assert.ok(snap.some((o) => o.id === gdp.children[1].id && o.name === "AgentGateway Portfolio MCP"), "portfolio set child missing");
+});
+
+test("full-branch: preserves the three live-verified invariants", () => {
+  const snap = JSON.parse(readFileSync(fullBranchPath, "utf8"));
+  const amount = snap.find((o) => o.name === "MCP Amount");
+  assert.equal(amount?.defaultValue, "0", "absent amount must resolve to 0 (low-risk fall-through)");
+  const set = snap.find((o) => o.type === "PolicySet" && o.name === "AgentGateway Portfolio MCP");
+  const byId = Object.fromEntries(snap.filter((o) => o.id).map((o) => [o.id, o]));
+  const names = set.children.map((c) => byId[c.id]?.name);
+  const highIdx = names.indexOf("High Risk Orders with HITL");
+  const lowIdx = names.indexOf("Allow low risk orders");
+  assert.ok(highIdx !== -1 && lowIdx !== -1 && highIdx < lowIdx, "high-risk must precede low-risk");
+  const high = snap.find((o) => o.type === "Policy" && o.name === "High Risk Orders with HITL");
+  assert.equal(high?.condition?.and?.conditions?.length, 3, "NotEquals-_null guard must be present");
+});
+
+test("full-branch: footer present and package closes cleanly", () => {
+  const snap = JSON.parse(readFileSync(fullBranchPath, "utf8"));
+  assert.equal(snap[0]["@class"], "DataStreamHeader");
+  assert.ok(snap.some((o) => o["@class"] === "DataStreamFooter"), "digest footer missing");
+  assert.ok(snap.some((o) => o.type === "SnapshotPackageFile$EndOfPackage"));
+});
+
+test("full-branch: every child/reference id resolves (fresh-PAP self-containment)", () => {
+  const snap = JSON.parse(readFileSync(fullBranchPath, "utf8"));
+  const ids = new Set(snap.filter((o) => o.id).map((o) => o.id));
+  const bad = [];
+  (function walk(node, ctx) {
+    if (Array.isArray(node)) return node.forEach((n) => walk(n, ctx));
+    if (!node || typeof node !== "object") return;
+    if ((node.type === "Policy" || node.type === "PolicySet") && Array.isArray(node.children)) {
+      for (const c of node.children) {
+        if (!ids.has(c.id)) bad.push(`${node.name}.${node.type}: dangling child ${c.id}`);
+      }
+    }
+    Object.values(node).forEach((v) => walk(v, ctx));
+  })(snap, null);
+  assert.deepEqual(bad, []);
+});
+
+test("default mode: merge variant unchanged (no GDP, no TV policy set)", () => {
+  execFileSync("node", [path.join(dir, "build-portfolio-snapshot.mjs")], { stdio: "inherit" });
+  const snap = JSON.parse(readFileSync(snapshotPath, "utf8"));
+  assert.ok(!snap.some((o) => o.name === "Global Decision Point" && o.type === "PolicySet"), "merge variant must not ship a GDP");
+  assert.ok(!snap.some((o) => o.type === "PolicySet" && o.name === "Token Validation"), "merge variant must not ship a TV set");
 });
