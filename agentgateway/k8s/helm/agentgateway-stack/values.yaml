@@ -33,13 +33,21 @@ ping-devops:
   pingauthorize:
     enabled: true
     envs:
+      # PAZ parent = baseline (standalone PAZ shape, as the operator's working
+      # deployments use); our layer adds jwt-lab + sideband on top.
       SERVER_PROFILE_URL: https://github.com/carbonefederico/ai-mcp-gateways-paz-integrations.git
       SERVER_PROFILE_PATH: agentgateway/k8s/server-profiles/pingauthorize
       SERVER_PROFILE_PARENT: PAZ
       SERVER_PROFILE_PAZ_URL: https://github.com/pingidentity/pingidentity-server-profiles.git
-      SERVER_PROFILE_PAZ_PATH: paz-pap-integration/pingauthorize
+      SERVER_PROFILE_PAZ_PATH: baseline/pingauthorize
     workload:
       type: StatefulSet
+      # Ephemeral /opt/out (no PVC): PAZ rebuilds from the profile on every
+      # start — the shape the operator's working PAZ deployments use, and the
+      # one that bootstraps cleanly. Policy data persists in PAP.
+      statefulSet:
+        persistentvolume:
+          enabled: false
     # No PingDirectory: PAZ runs standalone (embedded store) — the user's
     # standing preference: no unnecessary components in this stack.
     container:

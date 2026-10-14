@@ -15,14 +15,11 @@ dsconfig create-external-server \
 dsconfig create-access-token-validator \
     --validator-name JWT-Lab \
     --type jwt \
+    --set enabled:true \
     --set authorization-server:JWT-Lab \
     --set jwks-endpoint-path:/.well-known/jwks.json \
     --set allowed-signing-algorithm:RS256 \
     --set evaluation-order-index:1000
-
-dsconfig set-access-token-validator-prop \
-    --validator-name JWT-Lab \
-    --set enabled:true
 
 # --- sideband: shared secret + endpoint for the paz-extauthz-adapter ---------
 # Header name must match what the adapter sends (PDG-TOKEN).
