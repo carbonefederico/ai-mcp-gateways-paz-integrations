@@ -1,0 +1,44 @@
+# 40-agp.dsconfig.subst — agentgateway stack bootstrap (runs after the parent
+# profile's 30-pap.dsconfig.subst, which wires PAP external PDP mode).
+# Environment variables (injected from K8s Secrets via the chart values):
+#   SIDEBAND_SHARED_SECRET — value shared with the paz-extauthz-adapter
+# Numbering: 40 ensures jwt-lab exists before the sideband endpoint references
+# it as the endpoint's access-token-validator.
+
+# --- jwt-lab: the demo authorization server (JWKS source) --------------------
+dsconfig create-external-server \
+    --server-name JWT-Lab \
+    --type http \
+    --set base-url:https://jwt-lab-beta.vercel.app \
+    --set hostname-verification-method:strict
+
+dsconfig create-access-token-validator \
+    --validator-name JWT-Lab \
+    --type jwt \
+    --set authorization-server:JWT-Lab \
+    --set jwks-endpoint-path:/.well-known/jwks.json \
+    --set allowed-signing-algorithm:RS256 \
+    --set evaluation-order-index:1000
+
+dsconfig set-access-token-validator-prop \
+    --validator-name JWT-Lab \
+    --set enabled:true
+
+# --- sideband: shared secret + endpoint for the paz-extauthz-adapter ---------
+# Header name must match what the adapter sends (PDG-TOKEN).
+dsconfig set-http-servlet-extension-prop \
+    --extension-name "Sideband API" \
+    --set shared-secret-header-name:PDG-TOKEN \
+    --add "shared-secrets:AGENTGATEWAY-SIDEBAND"
+
+dsconfig create-sideband-api-shared-secret \
+    --secret-name AGENTGATEWAY-SIDEBAND \
+    --set "shared-secret:${SIDEBAND_SHARED_SECRET}"
+
+# base-path must match the client-facing path the adapter forwards (/mcp —
+# agentgateway serves the aggregated MCP endpoint there).
+dsconfig create-sideband-api-endpoint \
+    --endpoint-name "AgentGateway Portfolio MCP" \
+    --set service:"AgentGateway Portfolio MCP" \
+    --set access-token-validator:JWT-Lab \
+    --set base-path:/mcp
