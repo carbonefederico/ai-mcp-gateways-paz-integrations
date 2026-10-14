@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "policy-snapshot");
 const snapshotPath = path.join(dir, "Portfolio MCP policies.snapshot");
-const fullBranchPath = path.join(dir, "..", "..", "k8s", "server-profiles", "pingauthorizepap", "policies", "Portfolio MCP policies.full-branch.SNAPSHOT");
+const fullBranchPath = path.join(dir, "..", "..", "k8s", "server-profiles", "pingauthorizepap", "policies", "Portfolio-MCP-policies.full-branch.SNAPSHOT");
 
 function load() {
   return JSON.parse(readFileSync(snapshotPath, "utf8"));
@@ -267,17 +267,26 @@ test("full-branch: footer present and package closes cleanly", () => {
 test("full-branch: every child/reference id resolves (fresh-PAP self-containment)", () => {
   const snap = JSON.parse(readFileSync(fullBranchPath, "utf8"));
   const ids = new Set(snap.filter((o) => o.id).map((o) => o.id));
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   const bad = [];
-  (function walk(node, ctx) {
-    if (Array.isArray(node)) return node.forEach((n) => walk(n, ctx));
+  (function walk(node) {
+    if (Array.isArray(node)) return node.forEach(walk);
     if (!node || typeof node !== "object") return;
+    // children AND statements: TV ships with a bare-UUID statements[] entry
     if ((node.type === "Policy" || node.type === "PolicySet") && Array.isArray(node.children)) {
       for (const c of node.children) {
         if (!ids.has(c.id)) bad.push(`${node.name}.${node.type}: dangling child ${c.id}`);
       }
     }
-    Object.values(node).forEach((v) => walk(v, ctx));
-  })(snap, null);
+    for (const [k, v] of Object.entries(node)) {
+      if (k === "statements" && Array.isArray(v)) {
+        for (const s of v) {
+          if (typeof s === "string" && UUID.test(s) && !ids.has(s)) bad.push(`${node.name}: dangling statement ${s}`);
+        }
+      }
+      walk(v);
+    }
+  })(snap);
   assert.deepEqual(bad, []);
 });
 

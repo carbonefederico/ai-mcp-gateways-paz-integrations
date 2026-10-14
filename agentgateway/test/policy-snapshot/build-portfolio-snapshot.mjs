@@ -375,6 +375,12 @@ function collectRefs(node, acc = new Set()) {
       acc.add(v);
     } else if (k === "reference" && v && typeof v === "object" && v.id) {
       acc.add(v.id);
+    } else if (k === "statements" && Array.isArray(v)) {
+      // statements[] holds bare-UUID entity refs — e.g. the mortgage TV
+      // policy's Statement — that must ship for the import to validate.
+      for (const s of v) {
+        if (typeof s === "string" && s.includes("-")) acc.add(s);
+      }
     }
     collectRefs(v, acc);
   }
@@ -493,7 +499,9 @@ const digestB64 = digest.digest("base64");
 out.push({ "@class": "DataStreamFooter", digest: digestB64 });
 
 const target = FULL_BRANCH
-  ? path.join(here, "..", "..", "k8s", "server-profiles", "pingauthorizepap", "policies", "Portfolio MCP policies.full-branch.SNAPSHOT")
+  // no spaces in the name: the PAP import hook's `for f in $(find …)`
+  // word-splits, so any space in the filename breaks the import
+  ? path.join(here, "..", "..", "k8s", "server-profiles", "pingauthorizepap", "policies", "Portfolio-MCP-policies.full-branch.SNAPSHOT")
   : path.join(here, "Portfolio MCP policies.snapshot");
 mkdirSync(path.dirname(target), { recursive: true });
 writeFileSync(target, JSON.stringify(out));
