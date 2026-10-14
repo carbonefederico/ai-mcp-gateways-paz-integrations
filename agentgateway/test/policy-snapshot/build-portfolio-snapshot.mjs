@@ -223,7 +223,33 @@ const R_SESSION = rule("Allow MCP session methods", {
   effectSettings: { type: "unconditionalPermit" },
 });
 
-// Policy 2 — Delegation gate: act.sub present AND sub_type != vip_user -> deny
+// Policy 1b — Session methods with an inactive/indeterminate token -> 401
+// (carries the shared TV "Invalid Token" statement). Without this, an
+// expired/indeterminate token falls past the gated permit to the generic
+// Default Deny (403) instead of the correct 401 invalid_token. The
+// NotEquals-true comparison covers active == false AND active unresolved
+// (indeterminate) — both are non-valid tokens.
+// The statement itself ships via the TV policy in full-branch mode; the
+// ref-sweep pulls it in for the rule's statements[] reference.
+const R_SESSION_INVALID = rule("Session methods with invalid token", {
+  description: "Session methods are permitted only for a valid token; anything else gets the 401 invalid_token challenge.",
+  condition: {
+    and: {
+      conditions: [
+        cmp(SHARED.active, "NotEquals", { constant: { value: "true" } }),
+        {
+          or: {
+            conditions: [A.method.id, A.method.id, A.method.id, A.method.id].map((id, i) =>
+              cmp(id, "Equals", { constant: { value: ["initialize", "tools/list", "ping", "notifications/initialized"][i] } }),
+            ),
+          },
+        },
+      ],
+    },
+  },
+  effectSettings: { type: "unconditionalDeny" },
+  statementIds: ["cde26a38-2035-4385-bbfe-159ee1822976"], // mortgage TV's Invalid Token statement (401 invalid_token)
+});
 const R_DELEGATION = rule("Deny non-VIP subject behind delegated agent", {
   condition: {
     and: {
@@ -319,7 +345,7 @@ R_HIGH_MIRROR.effectSettings.condition = {
 const R_DEFAULT = rule("Default Deny", { effectSettings: { type: "unconditionalDeny" } });
 
 // Emit the rules themselves — Policies only reference them by id.
-for (const r of [R_SESSION, R_DELEGATION, R_READ, R_LOW, R_HIGH_SCOPE, R_HIGH_MIRROR, R_DEFAULT]) out.push(r);
+for (const r of [R_SESSION, R_SESSION_INVALID, R_DELEGATION, R_READ, R_LOW, R_HIGH_SCOPE, R_HIGH_MIRROR, R_DEFAULT]) out.push(r);
 
 // --- policies (shape template: mortgage Policy objects) --------------------
 function policy(name, childIds, condition = { empty: {} }) {
@@ -339,7 +365,7 @@ function policy(name, childIds, condition = { empty: {} }) {
   };
 }
 
-const P_SESSION = policy("Allow Session Methods", [R_SESSION.id]);
+const P_SESSION = policy("Allow Session Methods", [R_SESSION_INVALID.id, R_SESSION.id]);
 const P_DELEGATION = policy("Allow Delegated Token by VIP Users Only", [R_DELEGATION.id]);
 const P_READ = policy("Allow read operations", [R_READ.id]);
 const P_LOW = policy("Allow low risk orders", [R_LOW.id]);

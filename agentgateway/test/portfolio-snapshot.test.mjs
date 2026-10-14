@@ -313,3 +313,20 @@ test("session-methods permit requires an active token (T9: expired token cannot 
     assert.ok(text.includes(`"value":"${m}"`), `session permit lost method ${m}`);
   }
 });
+
+test("expired/indeterminate token on session methods denies 401 (invalid_token), not 403", () => {
+  const d = load();
+  const byName = Object.fromEntries(d.filter((o) => o.name).map((o) => [o.name, o]));
+  const deny = byName["Session methods with invalid token"];
+  assert.ok(deny, "missing deny rule for session methods with invalid token");
+  const text = JSON.stringify(deny);
+  assert.ok(text.includes('"unconditionalDeny"'), "deny rule must deny unconditionally");
+  // carries the shared Invalid Token statement (401 invalid_token)
+  const invalid = byName["Invalid Token"];
+  assert.ok(invalid, "Invalid Token statement must exist");
+  assert.ok(JSON.stringify(deny.statements ?? []).includes(invalid.id), "deny rule does not carry Invalid Token statement");
+  // gated on active != true (covers false AND indeterminate)
+  const active = byName["active"];
+  assert.ok(text.includes(`"attribute":{"id":"${active.id}"}`), "deny rule does not reference active");
+  assert.ok(text.includes('"op":"NotEquals"') || text.includes('"op":"NotEqualTo"'), "deny rule does not test active != true");
+});
