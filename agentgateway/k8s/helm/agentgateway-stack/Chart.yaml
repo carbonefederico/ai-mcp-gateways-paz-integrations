@@ -1,0 +1,10 @@
+apiVersion: v2
+name: agentgateway-stack
+description: Self-contained agentgateway + Ping Authorize stack (PAZ PDP, adapter, agentgateway, demo-mcp)
+type: application
+version: 0.1.0
+appVersion: "1.6.0"
+dependencies:
+  - name: ping-devops
+    version: 0.15.0
+    repository: https://helm.pingidentity.com/

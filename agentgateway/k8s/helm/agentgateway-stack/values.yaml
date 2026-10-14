@@ -1,0 +1,81 @@
+# agentgateway-stack defaults — dev posture (ping-devops.com hosts, DevOps
+# default credentials). For other environments override via -f values files.
+#
+# All Ping-stack values live under `ping-devops:` (the subchart dependency
+# name) — the Ping chart reads its values from there, not from this root.
+# Non-Ping workloads (adapter/agentgateway/demoMcp) are our templates and
+# stay at the root.
+#
+# Public surface (spec §7): ONLY the AG MCP endpoint and the PAP UI. The
+# Ping chart's ingress gate lets global override per-product disable, so its
+# ingress mechanism stays OFF entirely; our chart templates the two public
+# Ingress objects (see templates/ingress-*.yaml) and their cert-manager
+# Certificates.
+
+ping-devops:
+  global:
+    envs:
+      PING_IDENTITY_ACCEPT_EULA: "YES"
+    image:
+      tag: "2608"
+    privateCert:
+      generate: true          # per-product internal certs; adapter trusts PAZ's via NODE_EXTRA_CA_CERTS
+    ingress:
+      enabled: false          # Ping chart ingresses OFF (see header note); ours render instead
+      addReleaseNameToHost: subdomain
+      defaultDomain: ping-devops.com
+
+  pingdirectory:
+    enabled: true
+    envs:
+      SERVER_PROFILE_URL: https://github.com/pingidentity/pingidentity-server-profiles.git
+      SERVER_PROFILE_PATH: baseline/pingdirectory
+    workload:
+      type: StatefulSet
+
+  pingauthorize:
+    enabled: true
+    envs:
+      SERVER_PROFILE_URL: https://github.com/carbonefederico/ai-mcp-gateways-paz-integrations.git
+      SERVER_PROFILE_PATH: agentgateway/k8s/server-profiles/pingauthorize
+      SERVER_PROFILE_PARENT: PAZ
+      SERVER_PROFILE_PAZ_URL: https://github.com/pingidentity/pingidentity-server-profiles.git
+      SERVER_PROFILE_PAZ_PATH: paz-pap-integration/pingauthorize
+    workload:
+      type: StatefulSet
+    container:
+      waitFor:
+        pingdirectory:
+          service: ldaps
+          timeoutSeconds: 300
+      env:
+        - name: SIDEBAND_SHARED_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: agentgateway-stack-sideband
+              key: SECRET_HEADER_VALUE
+
+  pingauthorizepap:
+    enabled: true
+    envs:
+      SERVER_PROFILE_URL: https://github.com/carbonefederico/ai-mcp-gateways-paz-integrations.git
+      SERVER_PROFILE_PATH: agentgateway/k8s/server-profiles/pingauthorizepap
+    workload:
+      type: StatefulSet
+
+  pingdataconsole:
+    enabled: false
+
+# Non-Ping workloads (our templates):
+adapter:
+  image: carbonefederico/paz-extauthz-adapter:1.0.0
+
+agentgateway:
+  image: ghcr.io/agentgateway/agentgateway:v1.6.0
+  publicHost: agentgateway-stack-ag.ping-devops.com
+
+pap:
+  publicHost: agentgateway-stack-pap.ping-devops.com
+
+demoMcp:
+  image: carbonefederico/demo-mcp:1.0.0
