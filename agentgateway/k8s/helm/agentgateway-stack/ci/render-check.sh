@@ -39,12 +39,23 @@ for d in docs:
     if d and d.get('kind')=='Service':
         assert all(p['port'] != 15000 for p in d['spec']['ports']), f"admin port in Service {d['metadata']['name']}"
 
-# ingress + certificates: exactly our two public hosts, SSE annotations on AG
+# ingress + certificates: exactly our two public hosts, SSE annotations on AG;
+# certificates = 2 public (letsencrypt) + 3 internal private-certs (selfsigned)
 ag_ing = find('Ingress','agentgateway-stack-agentgateway')
 assert ag_ing['metadata']['annotations']['nginx.ingress.kubernetes.io/proxy-buffering']=='off'
 assert len([d for d in docs if d and d.get('kind')=='Ingress'])==2
 certs = [d for d in docs if d and d.get('kind')=='Certificate']
-assert len(certs)==2 and all(c['spec']['issuerRef']['name']=='letsencrypt-pdo' for c in certs)
+lets = [c for c in certs if c['spec']['issuerRef']['name']=='letsencrypt-pdo']
+priv = [c for c in certs if c['spec']['issuerRef']['name'].endswith('-internal-ca')]
+assert len(lets)==2 and len(priv)==3, (len(lets), len(priv))
+
+# PAP import hook word-splits filenames — the shipped snapshot must not contain
+# spaces (a space turns one import into three and every one fails)
+import os, glob
+snaps = glob.glob('../../server-profiles/pingauthorizepap/policies/*.SNAPSHOT')
+assert snaps, 'no policy snapshot in server-profiles'
+for s in snaps:
+    assert ' ' not in os.path.basename(s), f'snapshot filename has spaces: {s}'
 
 print('render-check OK')
 EOF
