@@ -1,0 +1,41 @@
+# In-cluster TLS for the Ping products: the Ping chart's privateCert.generate
+# hook (0.15.0) emits glued YAML document separators that break helm install's
+# hook parsing, so we supply the <release>-<product>-private-cert
+# kubernetes.io/tls Secrets it expects via cert-manager with a selfsigned
+# issuer. Each product's generate-private-cert-init container converts the
+# mounted tls.crt/tls.key into its keystore exactly as designed — only the
+# Secret's creation moves from the chart's hook to here.
+#
+# PAZ's cert carries the in-cluster service name as SAN — that is the name
+# the adapter's extract-paz-cert init container uses with openssl s_client.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ .Release.Name }}-internal-ca
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  selfSigned: {}
+{{- range tuple "pingauthorize" "pingauthorizepap" "pingdirectory" }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $.Release.Name }}-{{ . }}-private-cert
+  labels:
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+spec:
+  # Secret name must match the Ping chart's volume mount:
+  # <fullname>-private-cert where fullname = <release>-<product>.
+  secretName: {{ $.Release.Name }}-{{ . }}-private-cert
+  issuerRef:
+    name: {{ $.Release.Name }}-internal-ca
+    kind: Issuer
+  duration: 8760h        # 1 year; cert-manager rotates at 2/3 lifetime
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  dnsNames:
+    - {{ $.Release.Name }}-{{ . }}
+    - {{ $.Release.Name }}-{{ . }}-cluster
+{{- end }}
