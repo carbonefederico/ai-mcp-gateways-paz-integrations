@@ -1,0 +1,30 @@
+# cert-manager manages TLS for both public hosts (ClusterIssuer letsencrypt-pdo,
+# same issuer the rest of the namespace uses). Secrets pair with the two
+# Ingress templates in this chart.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-ag-tls
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  secretName: {{ .Release.Name }}-ag-tls
+  issuerRef:
+    name: letsencrypt-pdo
+    kind: ClusterIssuer
+  dnsNames:
+    - {{ .Values.agentgateway.publicHost }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-pap-tls
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  secretName: {{ .Release.Name }}-pap-tls
+  issuerRef:
+    name: letsencrypt-pdo
+    kind: ClusterIssuer
+  dnsNames:
+    - {{ .Values.pap.publicHost }}

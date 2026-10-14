@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "ag-stack.agentgatewayName" . }}
+  labels:
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  annotations:
+    kubernetes.io/ingress.class: "nginx-public"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"       # SSE streams
+    nginx.ingress.kubernetes.io/proxy-body-size: "8m"        # 64 KiB policy cap + headroom
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"   # long-lived MCP/SSE
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: "nginx-public"
+  tls:
+    - hosts:
+        - {{ .Values.agentgateway.publicHost }}
+      secretName: {{ .Release.Name }}-ag-tls
+  rules:
+    - host: {{ .Values.agentgateway.publicHost }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "ag-stack.agentgatewayName" . }}
+                port:
+                  number: 3001

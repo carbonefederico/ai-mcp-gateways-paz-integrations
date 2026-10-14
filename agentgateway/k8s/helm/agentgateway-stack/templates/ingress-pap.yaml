@@ -1,0 +1,30 @@
+# PAP UI — the one Ping workload that is public (spec §7). The Ping chart's
+# own ingress stays off (its gate lets global override per-product disable),
+# so this template is ours. backend-protocol HTTPS: the PAP serves TLS on 8443.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "ag-stack.papService" . }}
+  labels:
+    app.kubernetes.io/name: pingauthorizepap
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  annotations:
+    kubernetes.io/ingress.class: "nginx-public"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+spec:
+  ingressClassName: "nginx-public"
+  tls:
+    - hosts:
+        - {{ .Values.pap.publicHost }}
+      secretName: {{ .Release.Name }}-pap-tls
+  rules:
+    - host: {{ .Values.pap.publicHost }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "ag-stack.papService" . }}
+                port:
+                  number: 8443
