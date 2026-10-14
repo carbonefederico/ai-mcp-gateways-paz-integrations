@@ -150,7 +150,9 @@ dsconfig create-sideband-api-endpoint --endpoint-name "AgentGateway Portfolio MC
 - Idempotency: first-start only by design (server profile semantics); the
   file mirrors the commands already proven live in the cluster.
 
-### 5.2 Full-branch PAP snapshot (new artifact)The existing `test/policy-snapshot/Portfolio MCP policies.snapshot` is
+### 5.2 Full-branch PAP snapshot (new artifact)
+
+The existing `test/policy-snapshot/Portfolio MCP policies.snapshot` is
 **set-only** (built for merging into a branch that already has a Global
 Decision Point and Token Validation). A fresh PAP needs a full branch.
 
