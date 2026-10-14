@@ -15,7 +15,6 @@ def find(kind, name):
 for kind, n in [('Deployment','agentgateway-stack-adapter'),('Deployment','agentgateway-stack-agentgateway'),
                 ('Deployment','agentgateway-stack-demo-mcp'),
                 ('StatefulSet','agentgateway-stack-pingauthorize'),('StatefulSet','agentgateway-stack-pingauthorizepap'),
-                ('StatefulSet','agentgateway-stack-pingdirectory'),
                 ('Service','agentgateway-stack-agentgateway'),('Service','agentgateway-stack-adapter'),
                 ('Service','agentgateway-stack-demo-mcp'),('Service','agentgateway-stack-pingauthorizepap')]:
     assert find(kind, n), f'missing {kind}/{n}'
@@ -47,7 +46,8 @@ assert len([d for d in docs if d and d.get('kind')=='Ingress'])==2
 certs = [d for d in docs if d and d.get('kind')=='Certificate']
 lets = [c for c in certs if c['spec']['issuerRef']['name']=='letsencrypt-pdo']
 priv = [c for c in certs if c['spec']['issuerRef']['name'].endswith('-internal-ca')]
-assert len(lets)==2 and len(priv)==3, (len(lets), len(priv))
+# certificates = 2 public (letsencrypt) + 2 internal private-certs (selfsigned; no PD)
+assert len(lets)==2 and len(priv)==2, (len(lets), len(priv))
 
 # PAP import hook word-splits filenames — the shipped snapshot must not contain
 # spaces (a space turns one import into three and every one fails)

@@ -164,7 +164,8 @@ transaction mirror), the PAZ setup, the local wiring, and the 19-test matrix.
 ## Kubernetes deployment (self-contained stack)
 
 `k8s/helm/agentgateway-stack/` deploys the whole chain into a single
-namespace: PAZ + PAP + PingDirectory (Ping chart, StatefulSets),
+namespace: PAZ + PAP (Ping chart, StatefulSets, PAZ standalone with its
+embedded store),
 paz-extauthz-adapter, agentgateway (standalone mode, config from ConfigMap),
 and demo-mcp. Policies, the jwt-lab token validator, and the sideband
 endpoint bootstrap automatically from the server profiles in

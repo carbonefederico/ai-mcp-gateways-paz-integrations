@@ -16,7 +16,7 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   selfSigned: {}
-{{- range tuple "pingauthorize" "pingauthorizepap" "pingdirectory" }}
+{{- range tuple "pingauthorize" "pingauthorizepap" }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate

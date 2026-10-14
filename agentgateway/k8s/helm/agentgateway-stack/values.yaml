@@ -19,19 +19,13 @@ ping-devops:
     image:
       tag: "2608"
     privateCert:
-      generate: true          # per-product internal certs; adapter trusts PAZ's via NODE_EXTRA_CA_CERTS
+      generate: false         # Ping chart 0.15.0's generate-hook emits invalid YAML separators (breaks helm install);
+                              # our chart provides the <release>-<product>-private-cert Secrets via cert-manager
+                              # (see templates/private-certificates.yaml).
     ingress:
       enabled: false          # Ping chart ingresses OFF (see header note); ours render instead
       addReleaseNameToHost: subdomain
       defaultDomain: ping-devops.com
-
-  pingdirectory:
-    enabled: true
-    envs:
-      SERVER_PROFILE_URL: https://github.com/pingidentity/pingidentity-server-profiles.git
-      SERVER_PROFILE_PATH: baseline/pingdirectory
-    workload:
-      type: StatefulSet
 
   pingauthorize:
     enabled: true
@@ -43,11 +37,9 @@ ping-devops:
       SERVER_PROFILE_PAZ_PATH: paz-pap-integration/pingauthorize
     workload:
       type: StatefulSet
+    # No PingDirectory: PAZ runs standalone (embedded store) — the user's
+    # standing preference: no unnecessary components in this stack.
     container:
-      waitFor:
-        pingdirectory:
-          service: ldaps
-          timeoutSeconds: 300
       env:
         - name: SIDEBAND_SHARED_SECRET
           valueFrom:
