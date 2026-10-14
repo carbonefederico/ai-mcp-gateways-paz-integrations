@@ -202,6 +202,22 @@ untouched (they document the shared-cluster story).
 
 ### 6.2 agentgateway — `ghcr.io/agentgateway/agentgateway:v1.6.0`
 
+**Deployment-pattern choice: standalone mode with config-in-git (the GitOps
+pattern), not controller mode.** agentgateway's two run modes are not
+prod-worthiness tiers — standalone with the config managed in git is the
+same class of pattern as nginx (static conf in a ConfigMap), Envoy (static
+bootstrap), or Kong DB-less (declarative yaml), all ubiquitous in
+production. The GitOps loop is: PR → merge → `helm upgrade` → pod rolls;
+byte-identical local/prod config; every change reviewable in git; no
+controller to install or break. Controller mode (CRDs + operator) is the
+*platform* pattern — its advantage is reconciliation without restarts and
+CRD status, which pays off with many gateways and multiple teams writing
+routing/policy config. For a single gateway owned by one team, that is
+speculative scale. Trade accepted: every config change is a (brief) pod
+restart, dropping in-flight SSE connections. If the deployment later grows
+into a fleet, the adapter carries over untouched — it speaks the vendored
+Envoy `Authorization/Check` contract, which both modes consume.
+
 - Deployment, 1 replica, resources 256Mi/512Mi.
 - Config: ConfigMap `agentgateway-config` mounted read-only; args:
   `-f /config/agentgateway.yaml`. Content = the existing
