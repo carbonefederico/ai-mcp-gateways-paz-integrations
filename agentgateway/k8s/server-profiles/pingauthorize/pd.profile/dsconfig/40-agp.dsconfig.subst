@@ -1,5 +1,5 @@
-# 40-agp.dsconfig.subst — agentgateway stack bootstrap (runs after the parent
-# profile's 30-pap.dsconfig.subst, which wires PAP external PDP mode).
+# 40-agp.dsconfig.subst — agentgateway stack bootstrap (runs after
+# 30-pap-pdp.dsconfig, which wires PAP as the external PDP).
 # Environment variables (injected from K8s Secrets via the chart values):
 #   SIDEBAND_SHARED_SECRET — value shared with the paz-extauthz-adapter
 # Numbering: 40 ensures jwt-lab exists before the sideband endpoint references

@@ -37,7 +37,10 @@ data:
           - path:
               pathPrefix: /.well-known/oauth-protected-resource/portfolio
         backends:
-          - host: http://{{ include "ag-stack.demoMcpName" . }}:3000
+          # Route backend host is bare host:port — AG parses the string as
+          # host:port (a scheme makes it "invalid digit"); scheme belongs in
+          # mcp.targets only.
+          - host: {{ include "ag-stack.demoMcpName" . }}:3000
         policies:
           urlRewrite:
             path:

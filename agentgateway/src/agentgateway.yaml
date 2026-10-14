@@ -4,11 +4,16 @@
 # management UI's MCP page (targets, playground, capability toggle) reads and
 # writes. extAuthz attaches under mcp.policies — same PAZ chain as the
 # routing-based form, which this block replaces.
+# statefulMode: stateless (2026-07-28 MCP draft) — every POST is self-contained,
+# no initialize/session handshake, matching the APIM integration's posture where
+# PAZ permits and the request goes straight to the backend. HITL binding is
+# token⇄payload via the txn mirror, not session state.
 gateways:
   default:
     port: 3001
     protocol: HTTP
 mcp:
+  statefulMode: stateless
   targets:
   - name: portfolio
     mcp:

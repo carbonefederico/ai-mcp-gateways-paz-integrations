@@ -101,9 +101,9 @@ run() { # run <label> <expect-code> <token> <body>
     echo "--- request ---"
     echo "POST $AG_URL"
     jq . <<< "$4"
-    printf 'continue? [y/N]: '
+    printf 'continue? [Y/n]: '
     read -r ans
-    case "$ans" in y|Y|yes) ;; *) echo "  SKIP (not run)"; return ;; esac
+    case "$ans" in n|N|no) echo "  SKIP (not run)"; return ;; esac
   fi
   body_file=$(mktemp)
   printf '%s' "$4" > "$body_file"
@@ -153,9 +153,13 @@ run "T9 expired token"                              401 "$T_EXPIRED"    '{"jsonr
 
 echo ""
 echo "--- Transport posture ---"
-# T0: a bodyless GET (SSE stream open) carries no JSON-RPC body; PAZ must
-# deny it (default deny) — the gateway chain must answer, not hang or permit.
-out=$(curl -sk --max-time 40 -o /dev/null -w '%{http_code}' "$AG_URL" -H "Accept: text/event-stream")
+# T0: a bodyless GET (SSE stream open) carries no JSON-RPC body, so no tool
+# policy can match. A valid token is sent so the token validator passes and
+# the measured verdict is PAZ's default deny, not the missing-token 401.
+# The chain must answer, not hang or permit.
+out=$(curl -sk --max-time 40 -o /dev/null -w '%{http_code}' "$AG_URL" \
+  -H "Accept: text/event-stream" \
+  -H "Authorization: Bearer $T_READ")
 report "T0 bodyless GET stream open (default deny)" 403 "$out"
 
 echo ""

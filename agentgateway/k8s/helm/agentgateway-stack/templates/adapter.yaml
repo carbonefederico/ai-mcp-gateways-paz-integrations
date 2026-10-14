@@ -26,8 +26,16 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
+              # PAZ regenerates its self-signed cert on every bootstrap (its
+              # /opt/out is ephemeral). Extracting from the ClusterIP service
+              # can capture a terminating pod's OLD cert — the handshake
+              # succeeds against the old instance and every sideband call then
+              # fails TLS trust. So: connect to the PAZ POD FQDN (the same
+              # single-pod identity the adapter uses at runtime), and extract
+              # only once that pod itself answers.
+              PAZ_FQDN={{ include "ag-stack.pazService" . }}-0.{{ include "ag-stack.pazService" . }}-cluster.{{ .Release.Namespace }}.svc.cluster.local
               for i in $(seq 1 60); do
-                echo | openssl s_client -connect {{ include "ag-stack.pazService" . }}:443 -servername {{ include "ag-stack.pazService" . }} 2>/dev/null | openssl x509 -outform pem > /certs/paz.crt && break
+                echo | openssl s_client -connect "$PAZ_FQDN:1443" -servername "$PAZ_FQDN" 2>/dev/null | openssl x509 -outform pem > /certs/paz.crt && break
                 sleep 5
               done
               test -s /certs/paz.crt
@@ -40,7 +48,11 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: SERVICE_URL
-              value: "https://{{ include "ag-stack.pazService" . }}:443"
+              # PAZ's bootstrap self-signed cert lists the POD FQDN as SAN (not
+              # the ClusterIP service name), so the adapter must connect to the
+              # pod — via the headless StatefulSet DNS — for TLS name checking
+              # to pass. PAZ listens on HTTPS_PORT 1443.
+              value: "https://{{ include "ag-stack.pazService" . }}-0.{{ include "ag-stack.pazService" . }}-cluster.{{ .Release.Namespace }}.svc.cluster.local:1443"
             - name: SECRET_HEADER_VALUE
               valueFrom:
                 secretKeyRef:
@@ -60,13 +72,16 @@ spec:
           resources:
             requests: { cpu: 50m, memory: 128Mi }
             limits: { cpu: 500m, memory: 512Mi }
+          # The adapter speaks the ext_authz gRPC service only — it does not
+          # implement grpc.health.v1, which K8s gRPC probes require. Probe
+          # the port at TCP level instead.
           readinessProbe:
-            grpc:
+            tcpSocket:
               port: 8082
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
-            grpc:
+            tcpSocket:
               port: 8082
             initialDelaySeconds: 15
             periodSeconds: 20

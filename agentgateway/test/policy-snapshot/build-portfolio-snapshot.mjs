@@ -197,13 +197,27 @@ function rule(name, { description = "", condition = { empty: {} }, effectSetting
   };
 }
 
-// Policy 1 — Allow Session Methods (unconditionalPermit on known session methods)
+// Policy 1 — Allow Session Methods (unconditionalPermit on known session
+// methods, gated on an ACTIVE token: active == true. Without the positive
+// gate, an expired/indeterminate token rides through on the method match
+// alone — the shared inactive-deny rule only fires on a resolvable
+// active == false, and PAZ leaves active indeterminate when the token
+// validator fails outright (observed live on PAZ 2607 sideband: T9 expired
+// token PERMITTED on tools/list). With the gate, invalid or indeterminate
+// tokens fall through to default deny.)
 const R_SESSION = rule("Allow MCP session methods", {
   condition: {
-    or: {
-      conditions: [A.method.id, A.method.id, A.method.id, A.method.id].map((id, i) =>
-        cmp(id, "Equals", { constant: { value: ["initialize", "tools/list", "ping", "notifications/initialized"][i] } }),
-      ),
+    and: {
+      conditions: [
+        cmp(SHARED.active, "Equals", { constant: { value: "true" } }),
+        {
+          or: {
+            conditions: [A.method.id, A.method.id, A.method.id, A.method.id].map((id, i) =>
+              cmp(id, "Equals", { constant: { value: ["initialize", "tools/list", "ping", "notifications/initialized"][i] } }),
+            ),
+          },
+        },
+      ],
     },
   },
   effectSettings: { type: "unconditionalPermit" },

@@ -296,3 +296,20 @@ test("default mode: merge variant unchanged (no GDP, no TV policy set)", () => {
   assert.ok(!snap.some((o) => o.name === "Global Decision Point" && o.type === "PolicySet"), "merge variant must not ship a GDP");
   assert.ok(!snap.some((o) => o.type === "PolicySet" && o.name === "Token Validation"), "merge variant must not ship a TV set");
 });
+
+test("session-methods permit requires an active token (T9: expired token cannot ride through)", () => {
+  const d = load();
+  const byName = Object.fromEntries(d.filter((o) => o.name).map((o) => [o.name, o]));
+  const session = byName["Allow MCP session methods"];
+  const active = byName["active"];
+  assert.ok(session && active, "session rule and active attribute must exist");
+  // The method OR must sit inside an AND whose other operand is active == true.
+  const text = JSON.stringify(session.condition);
+  const activeId = `"attribute":{"id":"${active.id}"}`;
+  assert.ok(text.includes(activeId), "session permit does not reference the active attribute");
+  assert.ok(text.includes('"op":"Equals"') && text.includes('"value":"true"'), "session permit does not require active == true");
+  // And the method OR must remain: all four session methods still matched.
+  for (const m of ["initialize", "tools/list", "ping", "notifications/initialized"]) {
+    assert.ok(text.includes(`"value":"${m}"`), `session permit lost method ${m}`);
+  }
+});

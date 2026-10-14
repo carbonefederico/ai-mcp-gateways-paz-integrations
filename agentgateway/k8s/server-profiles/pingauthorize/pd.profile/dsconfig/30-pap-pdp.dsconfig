@@ -1,0 +1,41 @@
+# 30-pap-pdp.dsconfig — PAP as PAZ's external PDP.
+# The parentless profile has no baseline parent to provide this wiring, so we
+# do it here. Runs before 40-agp.dsconfig.subst (numbering) so the PDP is up
+# when the sideband endpoint lands.
+#
+# Values that match this deployment:
+#   base-url      — the in-cluster PAP service (ClusterIP, 8443)
+#   shared-secret — PAP admin password (DevOps default credentials)
+#   decision-node — PAP's Global Decision Point id for THIS install. NOT a
+#                   product constant: a fresh `setup demo` PAP generates its
+#                   own id (the baseline profile's e51688ff-… belongs to the
+#                   Ping sample deployment). Find the id for a given PAP in
+#                   its Symphonic.mv.db (H2) or via the PDP handshake error
+#                   PAZ logs. Cost if wrong: PDP returns 503 REQUEST_FAILED.
+#   branch        — the PAP branch the policy tree lives on. The Ping 11.1
+#                   demo bootstrap names the root branch SYSTEM; imports land
+#                   in their own branch and must be merged into SYSTEM
+#                   (POST /api/version-control/branches/{root}/merge with
+#                   {"fromBranchId": …, "resolutions": []}, then commit).
+#
+# PAP's HTTP servlet uses a self-signed cert → Blind Trust must be enabled
+# (the demo bootstrap ships it disabled).
+dsconfig set-trust-manager-provider-prop \
+    --provider-name "Blind Trust" \
+    --set enabled:true
+
+dsconfig create-external-server \
+    --server-name pingauthorizepap \
+    --type policy \
+    --set base-url:https://agentgateway-stack-pingauthorizepap:8443 \
+    --set hostname-verification-method:allow-all \
+    --set key-manager-provider:Null \
+    --set "trust-manager-provider:Blind Trust" \
+    --set shared-secret:2FederateM0re \
+    --set decision-node:7d0e390b-2b24-49a0-aa67-a85639640722 \
+    --set branch:SYSTEM
+
+dsconfig set-policy-decision-service-prop \
+    --set pdp-mode:external \
+    --set policy-server:pingauthorizepap \
+    --set trust-framework-version:v2

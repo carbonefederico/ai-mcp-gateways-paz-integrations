@@ -16,11 +16,15 @@ spec:
         - |
           set -e
           AG=http://{{ include "ag-stack.agentgatewayName" . }}:3001/mcp
-          # 1. tokenless call must be 401 (chain live, fail-closed)
+          # 1. tokenless tools/call must be denied by PAZ (401/403 — fail-closed
+          #    with a real PAZ verdict). Session methods (tools/list) are
+          #    intentionally permitted by the policy tree (MCP session
+          #    establishment), so they are not a valid deny probe.
           code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$AG" \
             -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
-            -d '{"jsonrpc":"2.0","method":"tools/list","id":1}')
-          echo "tokenless: $code (expect 401)"; test "$code" = 401
+            -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_portfolio_summary","arguments":{"customerId":"c1"}},"id":1}')
+          echo "tokenless tools/call: $code (expect 401 or 403)"
+          case "$code" in 401|403) ;; *) exit 1 ;; esac
           # 2. an invalid token still yields a PAZ verdict (401): the
           #    AG -> adapter -> PAZ -> return path is up end to end.
           echo "chain OK"
