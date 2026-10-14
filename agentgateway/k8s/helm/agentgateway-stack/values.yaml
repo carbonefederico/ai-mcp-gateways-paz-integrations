@@ -17,7 +17,10 @@ ping-devops:
     envs:
       PING_IDENTITY_ACCEPT_EULA: "YES"
     image:
-      tag: "2608"
+      tag: "2607"             # 2608 ships a pre-configured /opt/server instance whose
+                              # config.ldif makes hook 183's manage-profile setup fail
+                              # "Server Already Configured" on every boot; 2607 is the
+                              # tag the operator's working PAZ deployments run.
     privateCert:
       generate: false         # Ping chart 0.15.0's generate-hook emits invalid YAML separators (breaks helm install);
                               # our chart provides the <release>-<product>-private-cert Secrets via cert-manager
