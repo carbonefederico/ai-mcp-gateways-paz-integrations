@@ -21,11 +21,21 @@ Basic auth `administrator:<admin password>`, headers `X-XSRF-HEADER: ping` and
 3. **Merge into SYSTEM** — `POST /api/version-control/branches/<SYSTEM-id>/merge`
    with `{"fromBranchId":"<import-branch-id>","resolutions":[…]}`. Resolutions
    use `{"entityReference":{"id":…,"type":"PolicySet"},"resolutionType":"USE_TARGET"}`
-   (keep SYSTEM's copy). The full-branch snapshot re-ships the Global Decision
-   Point with the same id the demo bootstrap created — resolve it USE_TARGET.
+   (keep SYSTEM's copy). **Two id namespaces — do not conflate them:** the
+   PolicySet named `Global Decision Point` in the version-control tree shares
+   the snapshot's pinned id (`a7c4e2d0-…`, inherited from the mortgage
+   template), while PAZ's `decision-node` property pins the ENGINE-side
+   DecisionNode id (`7d0e390b-…`, the demo bootstrap's — see the next
+   section). They are different entities and different values by design. On
+   merge, a `Global Decision Point` PolicySet id conflict resolves USE_TARGET.
 4. **Commit SYSTEM** — same commit verb; the PDP serves the last COMMITTED
    snapshot, so this step is what makes the policies live. PAZ picks the new
    package up automatically (may take ~15 s).
+5. **If a re-import collides** (fresh-id duplicates of definitions SYSTEM
+   already has → 13 `ValidDefinition` violations on merge), patch the affected
+   rule/policy IN PLACE instead: GET with `?branch=<SYSTEM-id>`, mutate, PUT
+   (same `version` for updates; POST-create takes NO `version`), then commit.
+   This is how the T9 session-permit gate + invalid-token deny rule landed.
 
 ## Snapshot self-containment
 
@@ -38,10 +48,14 @@ the ref-sweep; `test/portfolio-snapshot.test.mjs` asserts it.
 
 ## Decision node id
 
-PAZ's policy external server pins `decision-node`, which is PAP's Global
-Decision Point id **generated per install** by `setup demo` — not a product
-constant. After a PAP state wipe, the new id must be read from PAP (engine H2
-db `Symphonic.mv.db`, strings around `Global Decision Point`) and set on PAZ
-(`dsconfig set-external-server-prop --server-name pingauthorizepap --set
-decision-node:<id>`), which lives in
+PAZ's policy external server pins `decision-node`, the ENGINE-side
+DecisionNode id PAP's `setup demo` generates (distinct from the
+version-control tree's PolicySet id — see step 3 above). Empirically
+deterministic across reinstalls of the same demo setup (`7d0e390b-…`
+survived a full PVC wipe re-bootstrap; the Ping baseline profile's
+`e51688ff-…` belongs to Ping's sample deployment, not this stack). To
+recover the id for a given PAP: strings around `Global Decision Point` in
+the engine H2 db `Symphonic.mv.db`, then validate by POSTing
+`/api/governance-engine/?branch=SYSTEM` with header `X-Decision-Node: <id>`
+(404 `NoSuchElement` = wrong id). It is pinned in
 `server-profiles/pingauthorize/pd.profile/dsconfig/30-pap-pdp.dsconfig`.

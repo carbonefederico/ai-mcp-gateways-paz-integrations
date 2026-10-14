@@ -169,8 +169,11 @@ embedded store),
 paz-extauthz-adapter, agentgateway (standalone mode, config from ConfigMap),
 and demo-mcp. Policies, the jwt-lab token validator, and the sideband
 endpoint bootstrap automatically from the server profiles in
-`k8s/server-profiles/` (PAZ dsconfig layer + full-branch policy snapshot the
-PAP imports at first start — no manual Policy Editor steps).
+`k8s/server-profiles/` (PAZ dsconfig layer + full-branch policy snapshot).
+The snapshot is imported at first start, but **import alone is not live**:
+the bootstrap imports it into its own branch and it must be merged into
+SYSTEM and committed — a manual admin-API step, exactly sequenced in
+[`k8s/server-profiles/pingauthorizepap/policies/README.md`](k8s/server-profiles/pingauthorizepap/policies/README.md).
 
 Public surface: the AG MCP endpoint (`agentgateway-stack-ag.ping-devops.com`)
 and the PAP UI (`agentgateway-stack-pap.ping-devops.com`), TLS via

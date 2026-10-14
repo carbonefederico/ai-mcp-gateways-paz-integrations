@@ -81,9 +81,19 @@ async function fetchJsonWithTimeout(config, path, payload, fetchImpl) {
 
 const retryDelaysMs = [0, 1000]; // one immediate retry, then one after 1s — the probe is idempotent
 
+// TLS trust failure against the sideband endpoint means the extracted PAZ cert
+// is stale (PAZ regenerates its self-signed cert on every bootstrap). The
+// emptyDir only refreshes when the ADAPTER pod restarts, so the pod must exit
+// and let K8s restart it — the init container then re-extracts the live cert.
+function isTlsTrustFailure(error) {
+  const code = error?.cause?.code ?? error?.code;
+  return typeof code === "string" && (code.endsWith("_SELF_SIGNED_CERT") || code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE" || code === "CERT_HAS_EXPIRED");
+}
+
 export async function callSideband(config, envelope, fetchImpl = globalThis.fetch) {
   const started = performance.now();
   let lastError = null;
+  let tlsTrustFailure = false;
 
   for (let attempt = 0; attempt < retryDelaysMs.length + 1; attempt += 1) {
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, retryDelaysMs[attempt - 1]));
@@ -98,6 +108,7 @@ export async function callSideband(config, envelope, fetchImpl = globalThis.fetc
       return { kind: "error", status: 502, message: `Sideband error (HTTP ${response.status})`, elapsedMs };
     } catch (error) {
       lastError = error;
+      if (isTlsTrustFailure(error)) tlsTrustFailure = true;
     }
   }
 
@@ -107,6 +118,7 @@ export async function callSideband(config, envelope, fetchImpl = globalThis.fetc
     status: 502,
     message: `Sideband unavailable${detail ? `: ${detail}` : ""}`,
     elapsedMs: Math.round(performance.now() - started),
+    podRestartRequired: tlsTrustFailure,
   };
 }
 
@@ -163,7 +175,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const protoDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "proto");
 
-export function createCheckHandler(config, fetchImpl = globalThis.fetch) {
+export function createCheckHandler(config, fetchImpl = globalThis.fetch, { onPodRestartRequired } = {}) {
   return async (call, callback) => {
     try {
       const envelope = buildSidebandEnvelope(call.request);
@@ -175,6 +187,7 @@ export function createCheckHandler(config, fetchImpl = globalThis.fetch) {
       if (config.debugLogging) {
         console.debug(`[DEBUG] sideband ${result.kind} in ${result.elapsedMs ?? "?"}ms`);
       }
+      if (result.podRestartRequired && onPodRestartRequired) onPodRestartRequired(result);
       callback(null, toCheckResponse(result, originalBodyText));
     } catch (error) {
       // Any adapter failure must surface as a gRPC error so agentgateway's
@@ -189,12 +202,23 @@ function redactHeader(entry) {
   return { [key]: /authorization|cookie|pdg-token|token/i.test(key) ? "<redacted>" : value };
 }
 
-export async function main() {
+export async function main({ onExit } = {}) {
   const config = loadConfig();
   const def = await protoLoader.load(path.join(protoDir, "ext_authz.proto"), { includeDirs: [protoDir], keepCase: false });
   const pkg = grpc.loadPackageDefinition(def);
   const server = new grpc.Server();
-  server.addService(pkg.envoy.service.auth.v3.Authorization.service, { Check: createCheckHandler(config) });
+  // A TLS trust failure means the extracted PAZ cert is stale (PAZ rebuilt its
+  // cert on restart). Exit nonzero so K8s restarts the pod — the init container
+  // then re-extracts the live cert. Fail closed meanwhile: the first bad call
+  // returns the 502 denial, the next ones hit a down endpoint.
+  server.addService(pkg.envoy.service.auth.v3.Authorization.service, {
+    Check: createCheckHandler(config, globalThis.fetch, {
+      onPodRestartRequired: (result) => {
+        console.error(`paz-extauthz-adapter: stale PAZ cert detected (${result.message}) — exiting for restart + re-extract`);
+        try { server.tryShutdown(() => (onExit ? onExit(1) : process.exit(1))); } catch { onExit ? onExit(1) : process.exit(1); }
+      },
+    }),
+  });
   await new Promise((resolve, reject) => {
     server.bindAsync(`0.0.0.0:${config.listenPort}`, grpc.ServerCredentials.createInsecure(), (err, bound) =>
       err ? reject(err) : resolve(bound),

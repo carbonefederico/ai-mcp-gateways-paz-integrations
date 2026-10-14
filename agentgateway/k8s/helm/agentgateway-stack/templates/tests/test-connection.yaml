@@ -25,9 +25,17 @@ spec:
             -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_portfolio_summary","arguments":{"customerId":"c1"}},"id":1}')
           echo "tokenless tools/call: $code (expect 401 or 403)"
           case "$code" in 401|403) ;; *) exit 1 ;; esac
-          # 2. an invalid token still yields a PAZ verdict (401): the
-          #    AG -> adapter -> PAZ -> return path is up end to end.
-          echo "chain OK"
+          # 2. a garbage Bearer token on a session method must yield PAZ's
+          #    401 invalid_token challenge — a POSITIVE policy verdict that
+          #    only a stack with the portfolio policies COMMITTED in PAP can
+          #    produce (a fresh install without the committed tree denies via
+          #    the demo tree instead, so this catches the
+          #    import→merge→commit step having been skipped).
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$AG" \
+            -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+            -H 'authorization: Bearer helm-test-garbage-token' \
+            -d '{"jsonrpc":"2.0","method":"tools/list","id":2}')
+          echo "garbage-token tools/list: $code (expect 401)"; test "$code" = 401
           # 3. demo-mcp health (backend liveness, direct):
           code=$(curl -s -o /dev/null -w '%{http_code}' http://{{ include "ag-stack.demoMcpName" . }}:3000/health)
           echo "demo-mcp /health: $code (expect 200)"; test "$code" = 200

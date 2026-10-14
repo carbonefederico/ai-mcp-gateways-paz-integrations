@@ -61,3 +61,15 @@ test("loadConfig requires SERVICE_URL and SECRET_HEADER_VALUE", () => {
   assert.equal(c.serviceUrl, "https://x"); // trailing slash stripped
   assert.equal(c.timeoutMs, 5000);
 });
+
+test("TLS trust failure (DEPTH_ZERO_SELF_SIGNED_CERT) marks the result unrecoverable — pod must exit so K8s re-extracts", async () => {
+  const tlsFail = async () => {
+    const e = new Error("unable to verify the first certificate");
+    e.cause = { code: "DEPTH_ZERO_SELF_SIGNED_CERT" };
+    throw e;
+  };
+  const r = await callSideband(config, envelope, tlsFail);
+  assert.equal(r.kind, "error");
+  assert.equal(r.status, 502);
+  assert.ok(r.podRestartRequired === true, "result must flag podRestartRequired so main() can exit");
+});

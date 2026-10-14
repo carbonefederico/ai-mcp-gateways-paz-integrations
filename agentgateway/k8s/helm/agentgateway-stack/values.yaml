@@ -69,7 +69,7 @@ ping-devops:
 
 # Non-Ping workloads (our templates):
 adapter:
-  image: carbonefederico/paz-extauthz-adapter:1.0.0
+  image: carbonefederico/paz-extauthz-adapter:1.0.1
 
 agentgateway:
   image: ghcr.io/agentgateway/agentgateway:v1.6.0
