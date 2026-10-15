@@ -4,8 +4,8 @@ Two layers, cleanly separated:
 
 | Layer | Runner | What it exercises | Needs a live stack? |
 |---|---|---|---|
-| **Unit tests** | `npm test` | adapter logic in isolation: sideband envelope, call/retry/timeout behavior, decision→Envoy mapping, gRPC loopback, snapshot builder | **No** — mocked sideband, no services |
-| **Integration tests** (the test plan) | `./policy-e2e-tests.sh` | the full production chain: client → agentgateway → adapter → PAZ sideband → PAP policies → demo-mcp, 19 scenarios | **Yes** — the K8s stack, or the local stack (§3/§4) |
+| **Unit tests** (`test/unit/`) | `npm test` | adapter logic in isolation: sideband envelope, call/retry/timeout behavior, decision→Envoy mapping, gRPC loopback, snapshot builder | **No** — mocked sideband, no services |
+| **Integration tests** (`test/integration/`, the test plan) | `./policy-e2e-tests.sh` | the full production chain: client → agentgateway → adapter → PAZ sideband → PAP policies → demo-mcp, 19 scenarios | **Yes** — the K8s stack, or the local stack (§3/§4) |
 
 > **Security disclaimer — the demo MCP server is intentionally open.** The
 > demo-mcp backend runs with `OAUTH_ENABLED` unset, so it accepts
@@ -53,19 +53,19 @@ timeout fail-closed, TLS-stale-cert self-exit, decision→Envoy mapping).
 
 ```bash
 cd agentgateway            # the adapter package root
-npm test                   # node --test test/*.test.mjs
+npm test                   # node --test test/unit/*.test.mjs
 ```
 
-Files, by concern:
+Files (`test/unit/`), by concern:
 
 | File | Covers |
 |---|---|
-| `test/envelope.test.mjs` | sideband request envelope shape (schema parity with the APIM fragment) |
-| `test/sideband-call.test.mjs` | adapter→PAZ call: PDG-TOKEN header, retry, timeout fail-closed, 401 passthrough, TLS-trust-failure self-exit |
-| `test/decision-mapping.test.mjs` | PAZ decision → Envoy CheckResponse (permit/deny/502, JSON-RPC fallback bodies) |
-| `test/adapter-loopback.test.mjs` | the real gRPC server end-to-end over loopback |
-| `test/proto-load.test.mjs` | vendored ext_authz.proto loads |
-| `test/portfolio-snapshot.test.mjs` | snapshot builder: roster, self-containment (every referenced id ships), session-gate invariants |
+| `unit/envelope.test.mjs` | sideband request envelope shape (schema parity with the APIM fragment) |
+| `unit/sideband-call.test.mjs` | adapter→PAZ call: PDG-TOKEN header, retry, timeout fail-closed, 401 passthrough, TLS-trust-failure self-exit |
+| `unit/decision-mapping.test.mjs` | PAZ decision → Envoy CheckResponse (permit/deny/502, JSON-RPC fallback bodies) |
+| `unit/adapter-loopback.test.mjs` | the real gRPC server end-to-end over loopback |
+| `unit/proto-load.test.mjs` | vendored ext_authz.proto loads |
+| `unit/portfolio-snapshot.test.mjs` | snapshot builder: roster, self-containment (every referenced id ships), session-gate invariants |
 
 The snapshot tests also **regenerate** the snapshot files as a side effect
 (the builder mints fresh ids per run) — content-equivalent; restore them
@@ -73,12 +73,13 @@ with `git restore` if the churn bothers you.
 
 ## 2. Integration tests — the test plan
 
-The 19-scenario policy matrix (`policy-e2e-tests.sh`). Same structure as the
-Azure APIM plan (`../../azure-apim/test/policy-e2e-tests.sh`): tokens minted
-on the fly by jwt-lab, claims explicit per scenario, one PASS/FAIL line each.
+The 19-scenario policy matrix (`integration/policy-e2e-tests.sh`). Same
+structure as the Azure APIM plan
+(`../../azure-apim/test/policy-e2e-tests.sh`): tokens minted on the fly by
+jwt-lab, claims explicit per scenario, one PASS/FAIL line each.
 
 ```bash
-cd agentgateway/test
+cd agentgateway/test/integration
 # against the K8s stack:
 AG_URL=https://agentgateway-stack-ag.ping-devops.com/mcp \
   AUD=https://agentgateway-stack-ag.ping-devops.com ./policy-e2e-tests.sh

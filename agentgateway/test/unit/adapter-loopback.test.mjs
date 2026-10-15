@@ -4,9 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import grpc from "@grpc/grpc-js";
 import protoLoader from "@grpc/proto-loader";
-import { createCheckHandler } from "../src/paz-extauthz-adapter.mjs";
+import { createCheckHandler } from "../../src/paz-extauthz-adapter.mjs";
 
-const protoDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "proto");
+const protoDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..", "src", "proto");
 const def = await protoLoader.load(path.join(protoDir, "ext_authz.proto"), { includeDirs: [protoDir], keepCase: false });
 const pkg = grpc.loadPackageDefinition(def);
 

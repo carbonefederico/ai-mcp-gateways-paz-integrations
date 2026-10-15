@@ -54,9 +54,16 @@ agentgateway/
 │       ├── ext_authz.proto            # vendored from agentgateway 1.5.0 (do not modify)
 │       └── shared_envoy.proto
 └── test/
-    ├── policy-e2e-tests.sh            # 19-test end-to-end policy matrix
-    ├── test.md                        # testing: sample MCP, policies, local setup, tests
-    ├── *.test.mjs                     # adapter unit + loopback tests (npm test)
+    ├── unit/                          # adapter unit tests (npm test)
+    │   ├── envelope.test.mjs
+    │   ├── sideband-call.test.mjs
+    │   ├── decision-mapping.test.mjs
+    │   ├── adapter-loopback.test.mjs
+    │   ├── proto-load.test.mjs
+    │   └── portfolio-snapshot.test.mjs
+    ├── integration/
+    │   └── policy-e2e-tests.sh        # 19-test end-to-end policy matrix
+    ├── test.md                        # testing: layers, how to run both, setup guides
     └── policy-snapshot/
         ├── Portfolio MCP policies.snapshot   # importable Policy Editor snapshot
         └── build-portfolio-snapshot.mjs      # regenerates the snapshot from the mortgage template
@@ -225,7 +232,7 @@ it — until then every call is denied. Exact sequence (works over
 ### Verify
 
     helm test agentgateway-stack -n <your-namespace>
-    cd test && AG_URL=https://<ag-host>/mcp \
+    cd test/integration && AG_URL=https://<ag-host>/mcp \
       AUD=https://<ag-host> ./policy-e2e-tests.sh   # 19/19
 
 The helm test asserts tokenless → 401/403, garbage token → 401

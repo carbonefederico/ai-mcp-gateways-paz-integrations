@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { toCheckResponse } from "../src/paz-extauthz-adapter.mjs";
+import { toCheckResponse } from "../../src/paz-extauthz-adapter.mjs";
 
 const RPC_BODY = '{"jsonrpc":"2.0","method":"tools/call","id":42,"params":{}}';
 

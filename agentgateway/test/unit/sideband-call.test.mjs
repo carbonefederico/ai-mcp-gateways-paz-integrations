@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { callSideband, loadConfig } from "../src/paz-extauthz-adapter.mjs";
+import { callSideband, loadConfig } from "../../src/paz-extauthz-adapter.mjs";
 
 const config = { serviceUrl: "https://paz.test", secretHeaderValue: "sec", timeoutMs: 200, debugLogging: false };
 const envelope = { source_ip: null, source_port: null, method: "POST", url: "http://h/", http_version: "1.1", headers: [], body: "{}" };

@@ -5,7 +5,7 @@ import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "policy-snapshot");
+const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "policy-snapshot");
 const snapshotPath = path.join(dir, "Portfolio MCP policies.snapshot");
 const fullBranchPath = path.join(dir, "..", "..", "k8s", "server-profiles", "pingauthorizepap", "policies", "Portfolio-MCP-policies.full-branch.SNAPSHOT");
 

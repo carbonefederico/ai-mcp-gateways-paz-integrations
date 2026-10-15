@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import protoLoader from "@grpc/proto-loader";
 
-const protoDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "proto");
+const protoDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..", "src", "proto");
 
 test("vendored ext_authz.proto loads and exposes the Envoy Authorization service", async () => {
   const def = await protoLoader.load(path.join(protoDir, "ext_authz.proto"), {

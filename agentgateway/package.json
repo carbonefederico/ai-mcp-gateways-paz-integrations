@@ -8,7 +8,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test 'test/*.test.mjs'",
+    "test": "node --test 'test/unit/*.test.mjs'",
     "start": "node --env-file-if-exists=.env src/paz-extauthz-adapter.mjs"
   },
   "dependencies": {
