@@ -1,8 +1,11 @@
-# Testing — the portfolio MCP demo, end to end
+# Testing — the portfolio MCP demo
 
-This guide covers everything needed to reproduce the tested integration:
-the sample MCP server (plus the one-line `amount` addition), the PAZ policies
-that authorize it, the local setup, and how to run and inspect the tests.
+Two layers, cleanly separated:
+
+| Layer | Runner | What it exercises | Needs a live stack? |
+|---|---|---|---|
+| **Unit tests** | `npm test` | adapter logic in isolation: sideband envelope, call/retry/timeout behavior, decision→Envoy mapping, gRPC loopback, snapshot builder | **No** — mocked sideband, no services |
+| **Integration tests** (the test plan) | `./policy-e2e-tests.sh` | the full production chain: client → agentgateway → adapter → PAZ sideband → PAP policies → demo-mcp, 19 scenarios | **Yes** — the K8s stack, or the local stack (§3/§4) |
 
 > **Security disclaimer — the demo MCP server is intentionally open.** The
 > demo-mcp backend runs with `OAUTH_ENABLED` unset, so it accepts
@@ -31,17 +34,99 @@ distinction is what the HITL policies encode.
 
 ## Prerequisites
 
-1. The PAZ + PAP deployment from the Azure APIM guide's section 1 (PDP mode
-   `external`, the JWT-Lab token validator already configured). If starting
-   fresh, follow [`../../azure-apim/test/test.md`](../../azure-apim/test/test.md)
-   §1.1–1.2 first.
-2. Node.js ≥ 22, `curl`, `jq`.
-3. The agentgateway binary (this demo used `/usr/local/bin/agentgateway`,
-   v1.5.0) — from [agentgateway.dev](https://agentgateway.dev/docs/).
+- **Unit tests:** Node.js ≥ 22 only.
+- **Integration tests against the K8s stack:** the deployed stack (see
+  [`../README.md`](../README.md), "Kubernetes deployment") — nothing local.
+- **Integration tests locally:** the PAZ + PAP pair (§4 — the Azure APIM
+  guide's section 1 describes the same setup:
+  [`../../azure-apim/test/test.md`](../../azure-apim/test/test.md)), plus
+  `curl`, `jq`, and the agentgateway binary
+  ([agentgateway.dev](https://agentgateway.dev/docs/)).
 
-## 1. Configure the PAZ server
+## 1. Unit tests (`npm test`)
 
-### 1.1 Sideband shared secret + endpoint
+The adapter is a real Node service (APIM's equivalent logic lives in a
+policy fragment; here it is code, so it gets unit tests). They run against
+mocked sideband endpoints — no PAZ, PAP, or gateway needed, finish in
+seconds, and are the right place to pin transport subtleties (retry-once,
+timeout fail-closed, TLS-stale-cert self-exit, decision→Envoy mapping).
+
+```bash
+cd agentgateway            # the adapter package root
+npm test                   # node --test test/*.test.mjs
+```
+
+Files, by concern:
+
+| File | Covers |
+|---|---|
+| `test/envelope.test.mjs` | sideband request envelope shape (schema parity with the APIM fragment) |
+| `test/sideband-call.test.mjs` | adapter→PAZ call: PDG-TOKEN header, retry, timeout fail-closed, 401 passthrough, TLS-trust-failure self-exit |
+| `test/decision-mapping.test.mjs` | PAZ decision → Envoy CheckResponse (permit/deny/502, JSON-RPC fallback bodies) |
+| `test/adapter-loopback.test.mjs` | the real gRPC server end-to-end over loopback |
+| `test/proto-load.test.mjs` | vendored ext_authz.proto loads |
+| `test/portfolio-snapshot.test.mjs` | snapshot builder: roster, self-containment (every referenced id ships), session-gate invariants |
+
+The snapshot tests also **regenerate** the snapshot files as a side effect
+(the builder mints fresh ids per run) — content-equivalent; restore them
+with `git restore` if the churn bothers you.
+
+## 2. Integration tests — the test plan
+
+The 19-scenario policy matrix (`policy-e2e-tests.sh`). Same structure as the
+Azure APIM plan (`../../azure-apim/test/policy-e2e-tests.sh`): tokens minted
+on the fly by jwt-lab, claims explicit per scenario, one PASS/FAIL line each.
+
+```bash
+cd agentgateway/test
+# against the K8s stack:
+AG_URL=https://agentgateway-stack-ag.ping-devops.com/mcp \
+  AUD=https://agentgateway-stack-ag.ping-devops.com ./policy-e2e-tests.sh
+# against a local stack (§3):
+./policy-e2e-tests.sh
+# verbose: payloads + pause before each scenario
+./policy-e2e-tests.sh --verbose
+```
+
+## 3. Local stack (for integration tests without K8s)
+
+Three terminals:
+
+```bash
+# 3.1 demo-mcp (the amount support is on main since commit bae8d49)
+cd ~/Documents/projects/ai/demo-mcp && npm run dev   # :3000
+
+# 3.2 the adapter
+cd <this-repo>/agentgateway
+cp .env.example .env            # fill SERVICE_URL + SECRET_HEADER_VALUE from §4.1
+npm start                        # :8083 (LISTEN_PORT in .env)
+
+# 3.3 agentgateway
+/usr/local/bin/agentgateway -f src/agentgateway.yaml   # :3001
+```
+
+Sanity checks before running the plan:
+
+```bash
+# a) tokenless call must be rejected (chain live, fail-closed):
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:3001/mcp \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+# expect 401; a 200 here means the chain is not enforcing
+
+# b) protected-resource metadata served through agentgateway:
+curl -s http://localhost:3001/.well-known/oauth-protected-resource/portfolio
+# "resource" must read http://localhost:3001/mcp/portfolio (client-facing), not
+# the backend's localhost:3000 — that is what the X-Client-Host/X-Client-Proto
+# headers on the metadata route are for.
+
+# c) stop the adapter and re-run (a): expect 403 (fail-closed, extAuthz
+# callout fails), then restart it.
+```
+
+## 4. Local PAZ/PAP setup (for integration tests without K8s)
+
+### 4.1 Sideband shared secret + endpoint
 
 All `dsconfig` commands run against the PAZ server (`--no-prompt` shown;
 `--hostname/--port/bindDN` omitted for brevity).
@@ -71,7 +156,7 @@ A path matching no endpoint falls through to the **Default service**, whose
 generic policy set permits any valid token — a silent security hole, not a
 routing error. The audit check in §5 guards against it.
 
-### 1.2 Import the portfolio policies (PAP admin API — no UI clicks)
+### 4.2 Import the portfolio policies (PAP admin API — no UI clicks)
 
 The demo policies ship as an importable snapshot:
 [`policy-snapshot/Portfolio MCP policies.snapshot`](policy-snapshot/Portfolio%20MCP%20policies.snapshot).
@@ -130,50 +215,7 @@ decision audit — `request.service` must read `AgentGateway Portfolio MCP`
 (never `Default`), and both mortgage and portfolio calls now appear in the
 same branch's audit trail (the two-teams-one-PDP story, visible).
 
-## 2. Run the pieces locally
-
-Three terminals:
-
-```bash
-# 2.1 demo-mcp (the amount support is on main since commit bae8d49)
-cd ~/Documents/projects/ai/demo-mcp && npm run dev   # :3000
-
-# 2.2 the adapter
-cd <this-repo>/agentgateway
-cp .env.example .env            # fill SERVICE_URL + SECRET_HEADER_VALUE from §1.1
-npm start                        # :8083 (LISTEN_PORT in .env)
-
-# 2.3 agentgateway
-/usr/local/bin/agentgateway -f src/agentgateway.yaml   # :3001
-```
-
-## 3. Sanity checks before testing
-
-```bash
-# a) tokenless call must be rejected (chain live, fail-closed):
-curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:3001/mcp \
-  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
-# expect 401; a 200 here means the chain is not enforcing
-
-# b) protected-resource metadata served through agentgateway:
-curl -s http://localhost:3001/.well-known/oauth-protected-resource/portfolio
-# "resource" must read http://localhost:3001/mcp/portfolio (client-facing), not
-# the backend's localhost:3000 — that is what the X-Client-Host/X-Client-Proto
-# headers on the metadata route are for.
-
-# c) stop the adapter and re-run (a): expect 403 (fail-closed, extAuthz
-# callout fails), then restart it.
-```
-
-## 4. Run the tests
-
-```bash
-cd agentgateway/test
-./policy-e2e-tests.sh
-```
-
-## 5. Inspect results
+## 5. Inspect integration results
 
 **Script output:** 19 PASS lines + `Result: 19 passed, 0 failed`. Any FAIL:
 401 = token validation, 403 = policy, 502 = sideband transport.
