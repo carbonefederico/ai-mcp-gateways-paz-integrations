@@ -65,11 +65,13 @@ Files (`test/unit/`), by concern:
 | `unit/decision-mapping.test.mjs` | PAZ decision → Envoy CheckResponse (permit/deny/502, JSON-RPC fallback bodies) |
 | `unit/adapter-loopback.test.mjs` | the real gRPC server end-to-end over loopback |
 | `unit/proto-load.test.mjs` | vendored ext_authz.proto loads |
-| `unit/portfolio-snapshot.test.mjs` | snapshot builder: roster, self-containment (every referenced id ships), session-gate invariants |
 
-The snapshot tests also **regenerate** the snapshot files as a side effect
-(the builder mints fresh ids per run) — content-equivalent; restore them
-with `git restore` if the churn bothers you.
+The unit suite deliberately contains **no policy-snapshot tests**: the
+snapshot's correctness is exercised where it matters — end-to-end, by the
+integration plan against the live PAP. The snapshot files are build
+artifacts; regenerate them explicitly with
+`node test/policy-snapshot/build-portfolio-snapshot.mjs` (`--full-branch`
+for the K8s profile variant) when the policy content changes.
 
 ## 2. Integration tests — the test plan
 

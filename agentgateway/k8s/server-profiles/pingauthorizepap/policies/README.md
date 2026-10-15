@@ -44,7 +44,8 @@ must not contain spaces (hence the dot-separated name above). The snapshot
 must be a closed package: every referenced id — including bare-UUID entries in
 `statements[]` arrays — must ship inside the file. The builder
 (`test/policy-snapshot/build-portfolio-snapshot.mjs --full-branch`) performs
-the ref-sweep; `test/portfolio-snapshot.test.mjs` asserts it.
+the ref-sweep at build time; the integration plan then proves the imported
+tree end-to-end against live PAP.
 
 ## Decision node id
 

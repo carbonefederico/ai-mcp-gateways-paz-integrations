@@ -54,13 +54,12 @@ agentgateway/
 │       ├── ext_authz.proto            # vendored from agentgateway 1.5.0 (do not modify)
 │       └── shared_envoy.proto
 └── test/
-    ├── unit/                          # adapter unit tests (npm test)
+    ├── unit/                          # adapter unit tests (npm test) — connector logic only
     │   ├── envelope.test.mjs
     │   ├── sideband-call.test.mjs
     │   ├── decision-mapping.test.mjs
     │   ├── adapter-loopback.test.mjs
-    │   ├── proto-load.test.mjs
-    │   └── portfolio-snapshot.test.mjs
+    │   └── proto-load.test.mjs
     ├── integration/
     │   └── policy-e2e-tests.sh        # 19-test end-to-end policy matrix
     ├── test.md                        # testing: layers, how to run both, setup guides
