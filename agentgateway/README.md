@@ -175,27 +175,72 @@ the bootstrap imports it into its own branch and it must be merged into
 SYSTEM and committed — a manual admin-API step, exactly sequenced in
 [`k8s/server-profiles/pingauthorizepap/policies/README.md`](k8s/server-profiles/pingauthorizepap/policies/README.md).
 
-Public surface: the AG MCP endpoint (`agentgateway-stack-ag.ping-devops.com`)
-and the PAP UI (`agentgateway-stack-pap.ping-devops.com`), TLS via
-cert-manager (`letsencrypt-pdo`). Everything else is cluster-internal.
+Public surface: the AG MCP endpoint and the PAP UI (both via Ingress; TLS
+issued by cert-manager). Everything else is cluster-internal.
 
-Deploy (dev posture — `ping-devops.com` hosts, DevOps default credentials):
+### What the chart needs from your cluster
+
+The chart is self-contained (PAZ, PAP, adapter, gateway, demo backend all
+deploy from it), but the cluster must provide:
+
+| Prerequisite | Detail |
+|---|---|
+| Helm 3 + `kubectl` | recent versions |
+| An nginx ingress controller | the chart pins ingress class `nginx-public` — edit `templates/ingress-agentgateway.yaml` / `ingress-pap.yaml` if yours differs |
+| cert-manager installed | public TLS issues via the `Certificate` resources in `templates/certificates.yaml`; the issuer is pinned to ClusterIssuer `letsencrypt-pdo` — edit that file to your issuer, or point the ingresses' `secretName` at your environment's existing cert |
+| DNS for the two public hosts | `agentgateway.publicHost` and `pap.publicHost` (defaults under `*.ping-devops.com`) must resolve to your ingress controller before TLS can issue |
+| Cluster egress to GitHub | the Ping products clone their server profiles at boot from `SERVER_PROFILE_URL` (defaults to this public repo — no fork needed unless you customize policies) |
+| Registry access | `carbonefederico/*` (Docker Hub), `ghcr.io/agentgateway/agentgateway`, `pingidentity/*` (Ping images; the EULA env is already set in values) |
+
+### Configure before install
+
+All in `k8s/helm/agentgateway-stack/values.yaml`:
+
+1. **Public hosts** — `agentgateway.publicHost` and `pap.publicHost`.
+2. **PAP administrator password** — with Ping chart defaults it is the
+   well-known DevOps default (`2FederateM0re`). Change it via the
+   subchart's `masterPassword` block (see the Ping DevOps docs at
+   https://devops.pingidentity.com for `masterPassword`/Vault options), or
+   don't expose PAP publicly at all — see Security posture.
+3. Optional: custom policies — fork the repo and repoint
+   `ping-devops.pingauthorize.envs.SERVER_PROFILE_URL/PATH` (and the pap
+   pair) at your fork.
+
+### Deploy
 
     cd k8s/helm/agentgateway-stack
     helm dependency update
-    helm install agentgateway-stack . -n ping-devops-fcarbone
+    helm install agentgateway-stack . -n <your-namespace>
 
-Operator steps: DNS records for the two hosts above → the cluster's
-nginx-public NLB. TLS issues automatically once DNS resolves.
+Once DNS resolves, cert-manager issues the certificates automatically.
 
-Verify:
+### Post-install: make the policies live (manual, ~5 API calls)
 
-    helm test agentgateway-stack -n ping-devops-fcarbone   # wiring: 401/200/reachable
-    cd test && AG_URL=https://agentgateway-stack-ag.ping-devops.com/mcp \
-      AUD=https://agentgateway-stack-ag.ping-devops.com ./policy-e2e-tests.sh   # 19/19
+The bootstrap imports the policy snapshot into its own version-control
+branch; it must be merged into SYSTEM and committed before the PDP serves
+it — until then every call is denied. Exact sequence (works over
+`kubectl port-forward svc/<release>-pingauthorizepap 8443` too):
+[`k8s/server-profiles/pingauthorizepap/policies/README.md`](k8s/server-profiles/pingauthorizepap/policies/README.md).
 
-AG management UI: `kubectl port-forward -n ping-devops-fcarbone
-deploy/agentgateway-stack-agentgateway 15000:15000` (loopback-only port —
-never expose it; agentgateway docs forbid publishing the admin interface).
+### Verify
 
-The full Kubernetes deployment is now in `k8s/` (self-contained stack, above).
+    helm test agentgateway-stack -n <your-namespace>
+    cd test && AG_URL=https://<ag-host>/mcp \
+      AUD=https://<ag-host> ./policy-e2e-tests.sh   # 19/19
+
+The helm test asserts tokenless → 401/403, garbage token → 401
+`invalid_token` (a positive policy verdict — it only passes once the
+post-install commit step is done), demo-mcp health, and adapter reachability.
+
+### Security posture
+
+- **PAP admin console is exposed publicly by default, with the well-known
+  DevOps default password.** It can rewrite the policy tree gating the
+  gateway — do not leave this as-is on an internet-facing cluster: remove
+  the PAP ingress (admin work runs over `kubectl port-forward`) or set a
+  real administrator password first.
+- AG management UI is not exposed; use
+  `kubectl port-forward -n <ns> deploy/<release>-agentgateway 15000:15000`
+  (loopback only — never publish the admin interface).
+- The PAZ⇄adapter sideband secret is generated once at install and reused
+  across upgrades; it never leaves the namespace.
