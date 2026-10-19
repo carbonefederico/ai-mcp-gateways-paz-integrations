@@ -39,16 +39,21 @@ if test -d "${STAGING_DIR}/policies"; then
     for policyFileName in $(find "${STAGING_DIR}/policies/" -iname \*.SNAPSHOT 2> /dev/null | sort | uniq); do
         policyName=$(basename "${policyFileName}")
         branchName="${policyName%.SNAPSHOT}"
-        branchState=$(curl -H "x-user-id: ${PAP_ADMIN}" -k "${branchesUrl}" 2>/dev/null | \
-            jq -r --arg b "${branchName}" '.data[]? | select(.name == $b) | .tip.state' 2>/dev/null)
+        # A freshly imported branch inherits SYSTEM's head; its tip is a
+        # working copy that stays UNCOMMITTED forever. The first commit moves
+        # the branch's `head` off SYSTEM's — that is the committed check.
+        heads=$(curl -H "x-user-id: ${PAP_ADMIN}" -k "${branchesUrl}" 2>/dev/null | \
+            jq -r '[.data[]? | select(.name == $b or .name == "SYSTEM") | .head] | @tsv' --arg b "${branchName}" 2>/dev/null)
+        branchHead=${heads%%$'\t'*}
+        systemHead=${heads##*$'\t'}
 
-        if test "${branchState}" = "COMMITTED"; then
+        if test -n "${branchHead}" && test "${branchHead}" != "null" && test "${branchHead}" != "${systemHead}"; then
             echo "Branch ${branchName} already committed - nothing to do"
             continue
         fi
 
-        if test -n "${branchState}" && test "${branchState}" != "null"; then
-            container_failure "81" "Branch '${branchName}' exists with state ${branchState} (expected COMMITTED)"
+        if test -n "${branchHead}" && test "${branchHead}" != "null"; then
+            container_failure "81" "Branch '${branchName}' exists uncommitted (head=${branchHead})"
         fi
 
         echo "Importing policy snapshot: ${policyName} -> branch ${branchName}"
@@ -59,13 +64,13 @@ if test -d "${STAGING_DIR}/policies"; then
         fi
 
         echo "Created Snapshot ID: ${snapshotId} - committing"
-        commitState=$(curl -H "x-user-id: ${PAP_ADMIN}" -H 'Content-Type: application/json' -k \
+        commitHead=$(curl -H "x-user-id: ${PAP_ADMIN}" -H 'Content-Type: application/json' -k \
             --data-binary '{"message":"bootstrap: import '"${branchName}"'"}' \
-            "https://localhost:${HTTPS_PORT}/api/version-control/branches/${snapshotId}/commit" | jq -r '.state')
+            "https://localhost:${HTTPS_PORT}/api/version-control/branches/${snapshotId}/commit" | jq -r '.head // .id')
 
-        if test "${commitState}" != "COMMITTED"; then
-            container_failure "81" "Branch '${branchName}' could not be committed (state=${commitState})"
+        if test -z "${commitHead}" || test "${commitHead}" = "null"; then
+            container_failure "81" "Branch '${branchName}' could not be committed"
         fi
-        echo "Branch ${branchName} committed (snapshot ${snapshotId})"
+        echo "Branch ${branchName} committed (head ${commitHead})"
     done
 fi

@@ -23,15 +23,20 @@ PDP_BRANCH="AgentGatewayPortfolioMCP"
 
 echo "Waiting for PAP to expose committed branch ${PDP_BRANCH}..."
 while true; do
-    branchState=$(curl -sk --max-time 5 \
+    # A freshly imported branch inherits SYSTEM's head; its tip is a working
+    # copy that stays UNCOMMITTED forever. The first commit moves the
+    # branch's `head` off SYSTEM's — that is the committed discriminator.
+    heads=$(curl -sk --max-time 5 \
         -H "X-XSRF-HEADER: ping" -H "x-user-id: administrator" \
         -u "administrator:${PAP_SHARED_SECRET}" \
         "${PAP_BASE_URL}/api/version-control/branches" 2>/dev/null | \
-        jq -r --arg b "${PDP_BRANCH}" '.data[]? | select(.name == $b) | .tip.state' 2>/dev/null)
-    if test "${branchState}" = "COMMITTED"; then
-        echo "PAP branch ${PDP_BRANCH} is committed - starting server"
+        jq -r '[.data[]? | select(.name == $b or .name == "SYSTEM") | .head] | @tsv' --arg b "${PDP_BRANCH}" 2>/dev/null)
+    branchHead=${heads%%$'\t'*}
+    systemHead=${heads##*$'\t'}
+    if test -n "${branchHead}" && test "${branchHead}" != "null" && test "${branchHead}" != "${systemHead}"; then
+        echo "PAP branch ${PDP_BRANCH} is committed (head ${branchHead}) - starting server"
         break
     fi
-    echo "PAP branch ${PDP_BRANCH} not committed yet (state=${branchState:-unreachable}) - waiting 5s"
+    echo "PAP branch ${PDP_BRANCH} not committed yet - waiting 5s"
     sleep 5
 done
