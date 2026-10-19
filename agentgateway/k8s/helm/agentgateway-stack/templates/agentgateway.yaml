@@ -8,30 +8,37 @@ metadata:
 data:
   agentgateway.yaml: |
     # Rendered from the chart — standalone config, mirrors src/agentgateway.yaml
-    # (simplified MCP mode, stateless) with cluster DNS instead of localhost.
+    # (routing form, one route per MCP, stateless) with cluster DNS instead of
+    # localhost. The per-MCP path is what PAZ keys on: the sideband envelope
+    # carries the original client URL and the policy tree selects the MCP by
+    # the leaf path segment under the AgentGateway policy set.
     gateways:
       default:
         port: 3001
         protocol: HTTP
-    mcp:
-      statefulMode: stateless
-      targets:
-        - name: portfolio
-          mcp:
-            host: http://{{ include "ag-stack.demoMcpName" . }}:3000/mcp/portfolio
-      policies:
-        extAuthz:
-          host: {{ include "ag-stack.adapterName" . }}:8082
-          failureMode: deny
-          protocol:
-            grpc: {}
-          includeRequestBody:
-            maxRequestBytes: 65536
-            allowPartialMessage: false
-          policies:
-            http:
-              requestTimeout: 5s
     routes:
+      - name: mcp-portfolio
+        matches:
+          - path:
+              pathPrefix: /mcp/portfolio
+        backends:
+          - mcp:
+              targets:
+                - name: portfolio
+                  mcp:
+                    host: http://{{ include "ag-stack.demoMcpName" . }}:3000/mcp/portfolio
+        policies:
+          extAuthz:
+            host: {{ include "ag-stack.adapterName" . }}:8082
+            failureMode: deny
+            protocol:
+              grpc: {}
+            includeRequestBody:
+              maxRequestBytes: 65536
+              allowPartialMessage: false
+            policies:
+              http:
+                requestTimeout: 5s
       - name: mcp-metadata
         matches:
           - path:

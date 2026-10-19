@@ -12,11 +12,13 @@
 #                   Ping sample deployment). Find the id for a given PAP in
 #                   its Symphonic.mv.db (H2) or via the PDP handshake error
 #                   PAZ logs. Cost if wrong: PDP returns 503 REQUEST_FAILED.
-#   branch        — the PAP branch the policy tree lives on. The Ping 11.1
-#                   demo bootstrap names the root branch SYSTEM; imports land
-#                   in their own branch and must be merged into SYSTEM
-#                   (POST /api/version-control/branches/{root}/merge with
-#                   {"fromBranchId": …, "resolutions": []}, then commit).
+#   branch        — the PAP branch the policy tree lives on. Branches are
+#                   deployable directly: the bootstrap hook imports
+#                   policies/AgentGatewayPortfolioMCP.SNAPSHOT into a branch
+#                   of the same name; pointing this property at that branch
+#                   makes it live (no merge into SYSTEM needed). The commit
+#                   step still matters: the PDP serves the last COMMITTED
+#                   snapshot, and the bootstrap hook commits after import.
 #
 # PAP's HTTP servlet uses a self-signed cert → Blind Trust must be enabled
 # (the demo bootstrap ships it disabled).
@@ -33,7 +35,7 @@ dsconfig create-external-server \
     --set "trust-manager-provider:Blind Trust" \
     --set shared-secret:2FederateM0re \
     --set decision-node:7d0e390b-2b24-49a0-aa67-a85639640722 \
-    --set branch:SYSTEM
+    --set branch:AgentGatewayPortfolioMCP
 
 dsconfig set-policy-decision-service-prop \
     --set pdp-mode:external \

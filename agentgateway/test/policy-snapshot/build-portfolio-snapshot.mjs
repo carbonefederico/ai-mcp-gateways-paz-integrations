@@ -30,6 +30,51 @@ const FULL_BRANCH = process.argv.includes("--full-branch");
 // randomize — the PAZ→PAP bootstrap must resolve the same node every import.
 const GDP_ID = "a7c4e2d0-8f11-4b5a-9c3d-6e8f2a1b4c7d";
 
+// Stable ids for the portfolio-owned objects, pinned to the values COMMITTED
+// on the live serving branch. Portfolio-only names aren't in the mortgage
+// template, so reuseId() used to fall through to randomUUID() — every
+// builder run minted fresh ids, and re-importing into a branch that already
+// held the previous run's content hit DUPLICATE_FULL_NAME violations the
+// merge API cannot skip (it only resolves conflicts, not violating CREATEs).
+// Pinning keeps regeneration idempotent: re-imports dedupe to plain
+// same-id conflicts, resolvable with USE_TARGET.
+const LIVE = {
+  service: "d7ce04dc-4d4c-491b-8f6f-2046e0668a04",
+  set: "7d0e390b-2b24-49a0-aa67-a85639640722",
+  target: "ae233328-0377-4cc0-965f-503ec05893b6",
+  attr_amount: "0c62c853-89f1-4b92-874e-645289feac98",
+  attr_amount_mirror: "dba0471d-5f17-4f82-a5b0-564df45c8d39",
+  attr_customer: "94037ec1-3f2d-49f2-becb-6b408fab2dbb",
+  attr_symbol: "b3680251-7c48-4e67-b91a-dbb7921ae12b",
+  attr_side: "48b21574-7238-42ef-8f28-a207e7c626ec",
+  attr_qty: "f23bd62b-5b25-4046-907f-338f3df77598",
+  attr_tctx_amount: "3bf6ec43-9482-4c58-9036-954248161511",
+  attr_tctx_customer_id: "e7b6cf1d-4e23-4ac3-9bc8-1123e1520c6e",
+  attr_tctx_quantity: "87d0ba1f-d8d9-4ffd-9004-dca9bb759c42",
+  attr_tctx_side: "77fee6c4-62b5-4fab-9e9a-0eaff14d8bd7",
+  attr_tctx_symbol: "b40753b6-adaf-4c3a-8345-568baa6214c4",
+  attr_tctx_tool: "51d2c466-c9e0-4448-b1e1-d3a7a0d7516e",
+  stmt_read: "6239d2e1-e0f2-44fd-8c6d-de20a59ee802",
+  stmt_low: "ae57e179-4520-478c-85d0-6bc52f3de681",
+  stmt_high: "6cd9496f-575e-4738-ae24-7db63b1b6e70",
+  stmt_approval: "21cbb461-05e7-4e49-83c2-04f81ef116fd",
+  stmt_delegation: "5ec3e0c2-ea0c-4d26-9b20-59356d9d2abd",
+  rule_session: "4429ea9a-eca5-4409-9288-832f2105a923",
+  rule_session_invalid: "967df7ee-63a0-4ecb-bfbb-a39cc3d38f8a",
+  rule_delegation: "7ba55878-40ba-4d5a-ae0a-3131a96400d7",
+  rule_read: "ec8fe0e0-34d6-464b-b3f5-5dd8560451b2",
+  rule_low: "80fc7785-51d1-490b-9f45-ac1c489da232",
+  rule_high_scope: "f39d4abe-f1fd-47d7-a312-6b038215ca17",
+  rule_high_mirror: "c2ff86c1-9741-4d19-9ea6-7b77768fd89c",
+  rule_default: "6e82ab78-fdf6-42b6-ba4f-af4259e118f7",
+  pol_session: "bef782ac-1c97-4f8a-aeed-7d2b0a67fa6b",
+  pol_delegation: "c8cbb351-32b9-47df-b631-dd4204a1f341",
+  pol_read: "86fa1593-59ff-4cfa-a47f-0074dcf936dc",
+  pol_high: "87693d9a-5414-4360-a043-8f153d52608b",
+  pol_low: "4f3ca0f0-b7dd-4b14-83b8-ee72cbb275b7",
+  pol_default: "a7d01939-808b-4588-98f0-5138d4c730be",
+};
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const mortgagePath = path.join(here, "..", "..", "..", "azure-apim", "test", "policy-snapshot", "Mortgage MCP policies.snapshot");
 const mortgage = JSON.parse(readFileSync(mortgagePath, "utf8"));
@@ -43,6 +88,9 @@ const M = (name) => structuredClone(byName.get(name)); // mortgage template, dee
 const mId = (name) => byName.get(name)?.id;
 
 const out = [];
+// Attribute ids already emitted, so the full-branch baseline block (below)
+// doesn't re-ship a portfolio attribute with the same template id.
+const producedAttrs = new Set();
 
 // --- package boilerplate (shapes copied from the mortgage EXPORT, which is
 // the format the importer consumes: Header, PackageHeader, ENTITIES, then
@@ -55,7 +103,7 @@ const pkgHeader = firstTyped("SnapshotPackageFile$PackageHeader");
 out.push({ ...pkgHeader, snapshotId: randomUUID() });
 
 // --- service ---------------------------------------------------------------
-const SERVICE_ID = randomUUID();
+const SERVICE_ID = LIVE.service;
 const svc = firstNamed("APIM Mortgage MCP", "ServiceDefinition");
 out.push({ ...svc, id: SERVICE_ID, version: randomUUID(), name: "AgentGateway Portfolio MCP", fullName: "AgentGateway Portfolio MCP" });
 
@@ -65,8 +113,24 @@ const REQUEST_BODY_ID = mId("RequestBody");
 // serving branch dedupes on id+fullName; a new id with the same name trips
 // DUPLICATE_FULL_NAME conflicts against the mortgage branch's attributes.
 function reuseId(name) {
-  return byName.get(name)?.id ?? randomUUID();
+  return byName.get(name)?.id ?? ATTR_LIVE_IDS[name] ?? randomUUID();
 }
+
+// Portfolio attribute names -> live committed ids (see LIVE above).
+const ATTR_LIVE_IDS = {
+  "MCP Amount": LIVE.attr_amount,
+  "MCP Amount Mirror": LIVE.attr_amount_mirror,
+  "MCP Customer Id": LIVE.attr_customer,
+  "MCP Symbol": LIVE.attr_symbol,
+  "MCP Side": LIVE.attr_side,
+  "MCP Quantity": LIVE.attr_qty,
+  tctx_amount: LIVE.attr_tctx_amount,
+  tctx_customer_id: LIVE.attr_tctx_customer_id,
+  tctx_quantity: LIVE.attr_tctx_quantity,
+  tctx_side: LIVE.attr_tctx_side,
+  tctx_symbol: LIVE.attr_tctx_symbol,
+  tctx_tool: LIVE.attr_tctx_tool,
+};
 function mcpAttr(name, expression, valueType, defaultValue = "_null") {
   const tmpl = M("MCP Tool Name");
   return {
@@ -98,7 +162,7 @@ const A = {
   side: mcpAttr("MCP Side", "$.params.arguments.side", "STRING"),
   qty: mcpAttr("MCP Quantity", "$.params.arguments.quantity", "STRING"),
 };
-for (const a of Object.values(A)) out.push(a);
+for (const a of Object.values(A)) { out.push(a); producedAttrs.add(a.id); }
 
 // --- access-token claim attributes (resolve from AccessToken) --------------
 // Templates: txn / approved_for / tctx_change_type / tctx_mortgage_id all
@@ -121,7 +185,7 @@ const T = {
   qty: claimAttr("tctx_quantity", "$.tctx.quantity", "STRING", "tctx_change_type"),
   amount: claimAttr("tctx_amount", "$.tctx.amount", "STRING", "tctx_change_type"),
 };
-for (const t of Object.values(T)) out.push(t);
+for (const t of Object.values(T)) { out.push(t); producedAttrs.add(t.id); }
 
 // Shared token machinery keeps mortgage ids so the merge dedupes:
 const SHARED = {
@@ -142,10 +206,19 @@ const NULL = { constant: { value: "_null" } };
 // --- statements (templates reused; only payloads + references change) ------
 function stmt(name, templateName, payload, description) {
   const tmpl = M(templateName);
-  const s = { ...tmpl, id: randomUUID(), version: randomUUID(), name, description: description ?? "" };
+  const s = { ...tmpl, id: STMT_LIVE_IDS[name] ?? randomUUID(), version: randomUUID(), name, description: description ?? "" };
   if (payload !== undefined) s.payload = JSON.stringify(payload);
   return s;
 }
+
+// Statement names -> live committed ids.
+const STMT_LIVE_IDS = {
+  "Insufficient Scope Challenge - Read Tools": LIVE.stmt_read,
+  "Insufficient Scope Challenge - Low Risk Orders": LIVE.stmt_low,
+  "Insufficient Scope Challenge - High Risk Orders": LIVE.stmt_high,
+  "Approval Required": LIVE.stmt_approval,
+  "Delegation Not Permitted": LIVE.stmt_delegation,
+};
 
 const S = {
   readChallenge: stmt("Insufficient Scope Challenge - Read Tools", "Insufficient Scope Challenge - Read Tools", {
@@ -186,7 +259,7 @@ function rule(name, { description = "", condition = { empty: {} }, effectSetting
   const tmpl = mortgage.find((o) => o.type === "Rule" && o.name === "Default Deny");
   return {
     ...structuredClone(tmpl),
-    id: randomUUID(),
+    id: RULE_LIVE_IDS[name] ?? randomUUID(),
     version: randomUUID(),
     name,
     description,
@@ -205,6 +278,26 @@ function rule(name, { description = "", condition = { empty: {} }, effectSetting
 // validator fails outright (observed live on PAZ 2607 sideband: T9 expired
 // token PERMITTED on tools/list). With the gate, invalid or indeterminate
 // tokens fall through to default deny.)
+// Rule / Policy names -> live committed ids.
+const RULE_LIVE_IDS = {
+  "Allow MCP session methods": LIVE.rule_session,
+  "Session methods with invalid token": LIVE.rule_session_invalid,
+  "Deny non-VIP subject behind delegated agent": LIVE.rule_delegation,
+  "Allow portfolio read tools with portfolio:read scope": LIVE.rule_read,
+  "Allow low risk orders with portfolio:write scope": LIVE.rule_low,
+  "High-risk orders require portfolio:write scope": LIVE.rule_high_scope,
+  "Risky orders require approval bound to the transaction": LIVE.rule_high_mirror,
+  "Default Deny": LIVE.rule_default,
+};
+const POLICY_LIVE_IDS = {
+  "Allow Session Methods": LIVE.pol_session,
+  "Allow Delegated Token by VIP Users Only": LIVE.pol_delegation,
+  "Allow read operations": LIVE.pol_read,
+  "High Risk Orders with HITL": LIVE.pol_high,
+  "Allow low risk orders": LIVE.pol_low,
+  "Default Deny": LIVE.pol_default,
+};
+
 const R_SESSION = rule("Allow MCP session methods", {
   condition: {
     and: {
@@ -354,7 +447,7 @@ function policy(name, childIds, condition = { empty: {} }) {
   const polTemplate = mortgage.find((o) => o.type === "Policy" && o.name === "Default Deny");
   return {
     ...structuredClone(polTemplate),
-    id: randomUUID(),
+    id: POLICY_LIVE_IDS[name] ?? randomUUID(),
     version: randomUUID(),
     name,
     combiningAlgorithm: { algorithm: "FirstApplicable", evaluateAll: false },
@@ -400,7 +493,7 @@ for (const p of [P_SESSION, P_DELEGATION, P_READ, P_LOW, P_HIGH, P_DEFAULT]) out
 const SHARED_OBJECT_NAMES = ["active", "scope", "audience", "act_sub", "sub_type", "AccessToken", "HttpRequest", "Constants", "RequestBody"];
 for (const name of SHARED_OBJECT_NAMES) {
   const o = byName.get(name);
-  if (o) out.push(structuredClone(o));
+  if (o) { out.push(structuredClone(o)); if (o.objectType === "AttributeDefinition") producedAttrs.add(o.id); }
 }
 
 function collectRefs(node, acc = new Set()) {
@@ -428,12 +521,12 @@ function collectRefs(node, acc = new Set()) {
 }
 
 // --- the portfolio policy set + target -------------------------------------
-const TARGET_ID = randomUUID();
+const TARGET_ID = LIVE.target;
 const targetTemplate = firstNamed("Inline target");
 out.push({ ...targetTemplate, id: TARGET_ID, version: randomUUID(), targeted: { services: [SERVICE_ID] } });
 
 const portfolioSet = mortgage.find((o) => o.type === "PolicySet" && o.name === "APIM Mortgage MCP");
-const PORTFOLIO_SET_ID = randomUUID();
+const PORTFOLIO_SET_ID = LIVE.set;
 out.push({
   ...structuredClone(portfolioSet),
   id: PORTFOLIO_SET_ID,
@@ -460,14 +553,26 @@ out.push({
 //      integration documents.
 // The ref-sweep (below) closes the package over the objects above only.
 
-// --- full-branch variant: TV + GDP ship INSIDE the package -------------------
-// A FRESH PAP has no serving branch: the TV Policy here IS the only parent of
-// its inactive rule (no two-parent conflict), and the GDP links it to the
-// portfolio set with the fixed id the PAZ profile layer pins. Shape per the
-// live branch's export: GDP children = [{Token Validation, Policy},
-// {portfolio set, PolicySet}] — TV is a Policy, not a PolicySet. Everything
-// the TV references is pulled in verbatim by the ref-sweep below.
+// --- full-branch variant: baseline trust framework + TV + GDP ship INSIDE ---
+// A FRESH PAP has no serving branch, so the package must carry the product's
+// baseline trust framework, not just the policy tree: the stock 11.1 demo
+// defines HttpRequest with 12 children (RequestURI, ResourcePath→leaf,
+// RequestHeaders, QueryParameters, CorrelationId, IPAddress, ClientCertificate,
+// Response*, AccessToken) plus Gateway{BasePath, TrailingPath}, and the
+// AccessToken claim set (client_id, issuer, expiration, subject, username,
+// token_owner, token_type, user_token, roles, authentication_*, Actor*). The
+// ref-sweep below only copies REFERENCED objects — no portfolio policy points
+// at RequestURI/leaf/Gateway, so without this block the sweep silently ships a
+// 2-child HttpRequest and every fresh boot inherits a gutted baseline (the
+// engine still populates the built-ins, but the editor can't author
+// conditions against them). Emitted verbatim from the mortgage template —
+// canonical product ids, byte-identical to a stock demo bootstrap export.
 if (FULL_BRANCH) {
+  for (const a of mortgage.filter((o) => o.objectType === "AttributeDefinition")) {
+    if (producedAttrs.has(a.id)) continue;
+    producedAttrs.add(a.id);
+    out.push(structuredClone(a));
+  }
   const tvPolicy = structuredClone(mortgage.find((o) => o.type === "Policy" && o.name === "Token Validation"));
   out.push(tvPolicy);
   out.push({

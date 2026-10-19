@@ -1,23 +1,26 @@
 # yaml-language-server: $schema=https://agentgateway.dev/schema/config
-# Simplified MCP mode (top-level `mcp:` block): serves the aggregated MCP
-# endpoint at /mcp and /sse on the gateway below, and is the form the
-# management UI's MCP page (targets, playground, capability toggle) reads and
-# writes. extAuthz attaches under mcp.policies — same PAZ chain as the
-# routing-based form, which this block replaces.
-# statefulMode: stateless (2026-07-28 MCP draft) — every POST is self-contained,
-# no initialize/session handshake, matching the APIM integration's posture where
-# PAZ permits and the request goes straight to the backend. HITL binding is
-# token⇄payload via the txn mirror, not session state.
+# Routing form: one route per MCP (pathPrefix /mcp/<name>), each with its own
+# backend target and the shared extAuthz policy. The per-MCP path is what PAZ
+# keys on: the sideband envelope carries the original client URL, and the
+# policy tree selects the MCP by the leaf path segment (leaf == portfolio /
+# customer …) under the AgentGateway policy set. stateless mode (2026-07-28
+# MCP draft) — every POST is self-contained; HITL binding is token⇄payload
+# via the txn mirror, not session state.
 gateways:
   default:
     port: 3001
     protocol: HTTP
-mcp:
-  statefulMode: stateless
-  targets:
-  - name: portfolio
-    mcp:
-      host: http://localhost:3000/mcp/portfolio
+routes:
+- name: mcp-portfolio
+  matches:
+  - path:
+      pathPrefix: /mcp/portfolio
+  backends:
+  - mcp:
+      targets:
+      - name: portfolio
+        mcp:
+          host: http://localhost:3000/mcp/portfolio
   policies:
     extAuthz:
       host: localhost:8083
@@ -30,7 +33,6 @@ mcp:
       policies:
         http:
           requestTimeout: 5s
-routes:
 # RFC 9728 protected-resource metadata — plain HTTP passthrough to demo-mcp.
 # The backend handler derives the protected resource from the request path,
 # which must end in /mcp/<endpoint>; rewrite the client-facing suffix
