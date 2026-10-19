@@ -46,11 +46,34 @@ package fails with a bogus "outdated version" error.
 ## Decision node id
 
 PAZ's policy external server pins `decision-node`, the ENGINE-side
-DecisionNode id PAP's `setup demo` generates (distinct from the
-version-control tree's PolicySet id). Empirically deterministic across
-reinstalls of the same demo setup (`7d0e390b-…` survived a full PVC wipe
-re-bootstrap; the Ping baseline profile's `e51688ff-…` belongs to Ping's
-sample deployment, not this stack). To recover the id for a given PAP:
-strings around `Global Decision Point` in the engine H2 db `Symphonic.mv.db`,
-then validate by POSTing `/api/governance-engine/?branch=AgentGatewayPortfolioMCP`
-with header `X-Decision-Node: <id>`.
+DecisionNode id (distinct from the version-control tree's PolicySet ids).
+The Global Decision Point (GDP) PolicySet — the DecisionNode the PDP
+evaluates — ships INSIDE the branch snapshot (a branch export carries the
+whole tree from the GDP down), so the id is whatever the staged
+`AgentGatewayPortfolioMCP.SNAPSHOT` says: `a7c4e2d0-…`, pinned in
+`pingauthorize/pd.profile/dsconfig/30-pap-pdp.dsconfig`. Deterministic for
+this snapshot, NOT a product constant — a snapshot with a re-created GDP
+carries a new id and the dsconfig must follow. A mismatched id makes PAZ's
+PDP return 503 REQUEST_FAILED. To validate against a running PAP: POST
+`/api/governance-engine/?branch=AgentGatewayPortfolioMCP` (JSON `{}` body)
+with header `X-Decision-Node: <id>` — 200 with a `decision` field is a
+match, 404 NoSuchElement is not.
+
+## Bootstrap hooks (profile overrides)
+
+Both Ping products run numbered hooks from `${STAGING_DIR}/hooks/`; a
+server profile's `hooks/` directory merges over the image's stock hooks
+(hook 02 does `cp -Rf profile/. staging/`), so same-named files override
+stock behavior:
+
+- `pingauthorizepap/hooks/81-install-policies.sh` — overrides the stock
+  import hook, which used the filename INCLUDING the `.SNAPSHOT` extension
+  as the branch name and never committed (PDP serves only committed
+  snapshots). Ours strips the extension and commits; restart-safe (skips
+  when the branch is already COMMITTED).
+- `pingauthorize/hooks/50-before-post-start.sh` — gates PAZ's server start
+  on the PAP branch being present and COMMITTED. Without it PAZ's PDP
+  resolves the branch once at boot; losing that race (PAZ ready before PAP
+  has committed) locks in an empty package (`snapshotId=""`), every
+  decision comes back NOT_APPLICABLE, and no restart of PAP fixes it —
+  only a PAZ rebuild after PAP has committed.

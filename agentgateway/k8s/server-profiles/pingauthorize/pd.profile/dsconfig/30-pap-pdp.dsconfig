@@ -6,12 +6,16 @@
 # Values that match this deployment:
 #   base-url      — the in-cluster PAP service (ClusterIP, 8443)
 #   shared-secret — PAP admin password (DevOps default credentials)
-#   decision-node — PAP's Global Decision Point id for THIS install. NOT a
-#                   product constant: a fresh `setup demo` PAP generates its
-#                   own id (the baseline profile's e51688ff-… belongs to the
-#                   Ping sample deployment). Find the id for a given PAP in
-#                   its Symphonic.mv.db (H2) or via the PDP handshake error
-#                   PAZ logs. Cost if wrong: PDP returns 503 REQUEST_FAILED.
+#   decision-node — PAP's Global Decision Point (GDP) PolicySet id. The GDP
+#                   ships INSIDE our staged snapshot (a branch export carries
+#                   the whole tree from the GDP down), so the id is
+#                   deterministic: it is a7c4e2d0-…, the GDP id in
+#                   policies/AgentGatewayPortfolioMCP.SNAPSHOT. If the GDP is
+#                   ever re-created (a snapshot whose GDP carries a new id),
+#                   this value must be updated to match — a mismatched id
+#                   makes the PDP return 503 REQUEST_FAILED. (The Ping
+#                   baseline profile's e51688ff-… belongs to Ping's sample
+#                   deployment, not this stack.)
 #   branch        — the PAP branch the policy tree lives on. Branches are
 #                   deployable directly: the bootstrap hook imports
 #                   policies/AgentGatewayPortfolioMCP.SNAPSHOT into a branch
@@ -34,7 +38,7 @@ dsconfig create-external-server \
     --set key-manager-provider:Null \
     --set "trust-manager-provider:Blind Trust" \
     --set shared-secret:2FederateM0re \
-    --set decision-node:7d0e390b-2b24-49a0-aa67-a85639640722 \
+    --set decision-node:a7c4e2d0-8f11-4b5a-9c3d-6e8f2a1b4c7d \
     --set branch:AgentGatewayPortfolioMCP
 
 dsconfig set-policy-decision-service-prop \
