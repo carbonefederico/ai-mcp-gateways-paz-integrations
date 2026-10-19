@@ -36,8 +36,17 @@ dsconfig set-http-servlet-extension-prop \
 
 # base-path must match the client-facing path the adapter forwards (/mcp —
 # agentgateway serves the aggregated MCP endpoint there).
+#
+# The service MUST be the generic "AgentGateway" service — the PAP tree's
+# top wrapper PolicySet is targeted at it, and per-MCP selection happens one
+# level down via the wrapper's leaf attribute ("Portfolio MCP" PolicySet,
+# condition leaf == "portfolio"). Pointing the endpoint at the per-MCP
+# service instead leaves the top wrapper N/A for every request: every
+# decision comes back NOT_APPLICABLE, all permits fail and all denies pass
+# vacuously (an e2e matrix that is half green looks almost healthy — it
+# is not).
 dsconfig create-sideband-api-endpoint \
     --endpoint-name "AgentGateway Portfolio MCP" \
-    --set service:"AgentGateway Portfolio MCP" \
+    --set service:AgentGateway \
     --set access-token-validator:JWT-Lab \
     --set base-path:/mcp
