@@ -4,8 +4,8 @@ Two layers, cleanly separated:
 
 | Layer | Runner | What it exercises | Needs a live stack? |
 |---|---|---|---|
-| **Unit tests** (`test/unit/`) | `npm test` | adapter logic in isolation: sideband envelope, call/retry/timeout behavior, decision→Envoy mapping, gRPC loopback, snapshot builder | **No** — mocked sideband, no services |
-| **Integration tests** (`test/integration/`, the test plan) | `./policy-e2e-tests.sh` | the full production chain: client → agentgateway → adapter → PAZ sideband → PAP policies → demo-mcp, 19 scenarios | **Yes** — the K8s stack, or the local stack (§3/§4) |
+| **Unit tests** (`test/unit/`) | `npm test` | adapter logic in isolation: sideband envelope, call/retry/timeout behavior, decision→Envoy mapping, gRPC loopback | **No** — mocked sideband, no services |
+| **Integration tests** (`test/integration/`, the test plan) | `./policy-e2e-tests.sh` | the full production chain: client → agentgateway → adapter → PAZ sideband → PAP policies → demo-mcp, 27 scenarios | **Yes** — the K8s stack, or the local stack (§3/§4) |
 
 > **Security disclaimer — the demo MCP server is intentionally open.** The
 > demo-mcp backend runs with `OAUTH_ENABLED` unset, so it accepts
@@ -28,19 +28,59 @@ The policies guard **[`carbonefederico/demo-mcp`](https://github.com/carbonefede
 
 **The `amount` parameter is an addition to demo-mcp** (branch `amount-param`,
 commit `bae8d49`): `submit_trade_order` gained an optional monetary `amount`
-(EUR). Orders above **10,000** are economically risky and require human
-approval; 10,000 and below (or an absent `amount`) are low risk. This
-distinction is what the HITL policies encode.
+(EUR). Orders are partitioned into explicit bands (below); orders without an
+`amount` are **unpriceable and denied** — the policy never falls back to
+"low risk" for a missing value.
+
+## The policy model (branch `AgentGatewayPortfolioMCP`)
+
+The live tree (snapshot:
+[`k8s/server-profiles/pingauthorizepap/policies/AgentGatewayPortfolioMCP.SNAPSHOT`](../k8s/server-profiles/pingauthorizepap/policies/AgentGatewayPortfolioMCP.SNAPSHOT))
+is five named policies under a per-MCP wrapper, with **every request class
+explicitly covered — no implicit ordering fallbacks**:
+
+| Policy | Condition | Verdict |
+|---|---|---|
+| **Session Methods** | MCP method calls (initialize, tools/list, …) | ladder below, then `portfolio:read` scope |
+| **Read Tools** | read tools (summary, positions, simulate) | ladder below, then `portfolio:read` scope |
+| **Order Tool: missing amount** | `submit_trade_order` AND `amount <= 0` (absent amounts resolve to 0 via the attribute's `defaultValue`) | **deny** `unpriceable_order_denied` |
+| **Order Tool: medium risk HITL** | `submit_trade_order` AND `0 < amount <= threshold` | ladder below, then `portfolio:write`, then the **approval mirror** (six-field tctx + `txn` binding) |
+| **Order Tool: high risk denied** | `submit_trade_order` AND `amount > threshold` | **deny** `order_above_limit` — approval cannot exceed the band |
+| **Default Deny** | everything else | deny |
+
+**The ladder** — mandatory rules inside Session Methods, Read Tools, and the
+HITL policy, combined with `DenyOverrides` so every rule evaluates (a
+permit-branch hit under `FirstApplicable` would be terminal and silently
+skip later gates):
+
+- **R1 audience** — token minted for the MCP-specific audience
+  `Constants.Portfolio_MCP Audience` (= the gateway's `/mcp/portfolio`
+  resource URI, RFC 8707). A token for the wrong resource is `invalid_token`
+  → 401.
+- **R2 delegated-agent authorization** — fires ONLY when the token
+  delegates (`act.sub` present): the acting agent must equal
+  `Constants.Portfolio Analysis Agent` (`customer_support_agent`), an
+  admin-declared allow-list. Any other delegated actor is denied
+  (`agent_identity_mismatch`); non-delegated requests are outside R2
+  entirely. Authorization of an agent is an admin decision, not a token
+  property — `client_id` is irrelevant.
+- **R3 user claim** — delegated access (`act.sub` present) is reserved to
+  VIP users (`sub_type == vip_user`).
+
+**Tuning knobs** (PAP constants): `Constants.Order Approval Threshold`
+(NUMBER, 20000) sets the HITL/deny band boundary; the audience and agent
+constants set R1/R2. All constants carry the MCP's name per the
+`Constants.<Name>_MCP …` convention.
 
 ## Prerequisites
 
 - **Unit tests:** Node.js ≥ 22 only.
 - **Integration tests against the K8s stack:** the deployed stack (see
   [`../README.md`](../README.md), "Kubernetes deployment") — nothing local.
-- **Integration tests locally:** the PAZ + PAP pair (§4 — the Azure APIM
-  guide's section 1 describes the same setup:
-  [`../../azure-apim/test/test.md`](../../azure-apim/test/test.md)), plus
-  `curl`, `jq`, and the agentgateway binary
+  The bootstrap imports and commits the branch automatically; there is no
+  manual post-install step.
+- **Integration tests locally:** the PAZ + PAP pair (§4), plus `curl`, `jq`,
+  and the agentgateway binary
   ([agentgateway.dev](https://agentgateway.dev/docs/)).
 
 ## 1. Unit tests (`npm test`)
@@ -66,30 +106,45 @@ Files (`test/unit/`), by concern:
 | `unit/adapter-loopback.test.mjs` | the real gRPC server end-to-end over loopback |
 | `unit/proto-load.test.mjs` | vendored ext_authz.proto loads |
 
-The unit suite deliberately contains **no policy-snapshot tests**: the
-snapshot's correctness is exercised where it matters — end-to-end, by the
-integration plan against the live PAP. The snapshot files are build
-artifacts; regenerate them explicitly with
-`node test/policy-snapshot/build-portfolio-snapshot.mjs` (`--full-branch`
-for the K8s profile variant) when the policy content changes.
+The policy snapshot has **no unit tests by design**: its correctness is
+exercised where it matters — end-to-end, by the integration plan against
+the live PAP. The snapshot is the exported committed head of branch
+`AgentGatewayPortfolioMCP`; edit policies on the live PAP (or import the
+snapshot into a scratch PAP), then export the committed head over the file.
+The export→mutate→delete→re-import→commit edit loop is documented in
+[`../k8s/server-profiles/pingauthorizepap/policies/README.md`](../k8s/server-profiles/pingauthorizepap/policies/README.md).
 
 ## 2. Integration tests — the test plan
 
-The 19-scenario policy matrix (`integration/policy-e2e-tests.sh`). Same
-structure as the Azure APIM plan
-(`../../azure-apim/test/policy-e2e-tests.sh`): tokens minted on the fly by
-jwt-lab, claims explicit per scenario, one PASS/FAIL line each.
+The 27-scenario policy matrix (`integration/policy-e2e-tests.sh`). Tokens
+are minted on the fly by jwt-lab; claims are explicit per scenario so each
+PASS/FAIL line is self-documenting.
 
 ```bash
 cd agentgateway/test/integration
 # against the K8s stack:
-AG_URL=https://agentgateway-stack-ag.ping-devops.com/mcp \
-  AUD=https://agentgateway-stack-ag.ping-devops.com ./policy-e2e-tests.sh
+AG_URL=https://agentgateway-stack-ag.ping-devops.com/mcp/portfolio \
+  AUD=https://agentgateway-stack-ag.ping-devops.com \
+  MCP_AUD=https://agentgateway-stack-ag.ping-devops.com/mcp/portfolio \
+  ./policy-e2e-tests.sh
 # against a local stack (§3):
 ./policy-e2e-tests.sh
 # verbose: payloads + pause before each scenario
 ./policy-e2e-tests.sh --verbose
 ```
+
+The matrix maps 1:1 onto the policy model above: the three order bands plus
+boundaries (0, 3K, 20K, 20K+ε, 50K), the approval mirror (exact match,
+wrong/missing `txn`, amount drift), the ladder gates (declared vs undeclared
+agent, VIP vs standard delegation, MCP audience vs gateway-root audience),
+expired/invalid tokens (401s), and default-deny probes (unknown tool,
+bodyless GET).
+
+> A matrix where all the **denies** pass and all the **permits** fail is the
+> signature of an EMPTY deployment package (PDP resolved nothing) — it looks
+> almost healthy but no policy evaluated. Check
+> `dsconfig get-external-server-prop --server-name pingauthorizepap
+> --property snapshot` (`-` = empty) before debugging individual scenarios.
 
 ## 3. Local stack (for integration tests without K8s)
 
@@ -145,14 +200,17 @@ dsconfig --no-prompt create-sideband-api-shared-secret \
   --secret-name "AGENTGATEWAY-SIDEBAND" \
   --set "shared-secret:<generate-a-random-secret>"
 
-# base-path matches the agentgateway public MCP path (/portfolio); service
-# pins which policy set evaluates; the JWT-Lab validator validates the
-# bearer token inside the envelope.
+# The endpoint's service MUST be the GENERIC "AgentGateway" service — the
+# policy tree's top wrapper PolicySet is targeted at it, and per-MCP
+# selection happens one level down (the "Portfolio MCP" child PolicySet,
+# condition leaf == "portfolio"). Pointing the endpoint at the per-MCP
+# service leaves the top wrapper N/A for every request: every decision
+# comes back NOT_APPLICABLE, all permits fail and all denies pass vacuously.
 dsconfig --no-prompt create-sideband-api-endpoint \
   --endpoint-name "AgentGateway Portfolio MCP" \
-  --set "service:AgentGateway Portfolio MCP" \
+  --set "service:AgentGateway" \
   --set "access-token-validator:JWT-Lab" \
-  --set "base-path:/portfolio"
+  --set "base-path:/mcp"
 ```
 
 A path matching no endpoint falls through to the **Default service**, whose
@@ -161,66 +219,45 @@ routing error. The audit check in §5 guards against it.
 
 ### 4.2 Import the portfolio policies (PAP admin API — no UI clicks)
 
-The demo policies ship as an importable snapshot:
-[`policy-snapshot/Portfolio MCP policies.snapshot`](policy-snapshot/Portfolio%20MCP%20policies.snapshot).
-Regenerate it any time with `node test/policy-snapshot/build-portfolio-snapshot.mjs`
-(from the `agentgateway/` folder). The snapshot is **self-contained portfolio
-content only** — service, attributes, statements, rules, six policies, and the
-`AgentGateway Portfolio MCP` policy set. It deliberately ships **no Global
-Decision Point and no Token Validation**: both already exist in the serving
-branch, and re-shipping them either fails the import (their children must
-resolve inside the package) or fails the merge (a fresh-id TV claiming the
-shared inactive rule = two parents).
-
-The serving branch is the one PAZ already points at — the APIM demo's
-`ID4AI Control Plane` branch. The import below was already executed against
-the live PAP; the commands are reproducible:
+The demo policies ship as the branch snapshot
+[`k8s/server-profiles/pingauthorizepap/policies/AgentGatewayPortfolioMCP.SNAPSHOT`](../k8s/server-profiles/pingauthorizepap/policies/AgentGatewayPortfolioMCP.SNAPSHOT)
+— the exported committed head of branch `AgentGatewayPortfolioMCP`,
+self-contained: trust framework baseline, the `AgentGateway` service and
+wrapper, the `Portfolio MCP` set with its five policies, and the Global
+Decision Point whose children hang off the `AgentGateway` wrapper.
 
 ```bash
-PAP=https://id4ai-control-plane-pingauthorizepap.ping-devops.com
-AUTH='administrator:2FederateM0re'   # console credential; add header x-user-id: administrator
-BR=20fc6b9c-14dc-45ba-8e53-271a1b4d4e9a
+PAP=https://<pap-host>                 # e.g. the K8s stack's PAP, or localhost:18443 under port-forward
+AUTH='administrator:2FederateM0re'     # console credential; add header x-user-id: administrator
 
-# 1. import the snapshot into a NEW branch (raw JSON body; the package
-#    carries its own DataStreamFooter digest):
+# 1. import the snapshot into a NEW branch named after the file
+#    (raw JSON body; the package carries its own DataStreamFooter digest):
 curl -sk -u "$AUTH" -H 'x-user-id: administrator' -X POST \
   -H 'Content-Type: application/json' \
-  --data-binary @test/policy-snapshot/"Portfolio MCP policies.snapshot" \
-  "$PAP/api/snapshot/Portfolio%20import/import"
+  --data-binary @../k8s/server-profiles/pingauthorizepap/policies/AgentGatewayPortfolioMCP.SNAPSHOT \
+  "$PAP/api/snapshot/AgentGatewayPortfolioMCP/import"
+# -> prints the branch id
 
-# 2. export the import branch's tip (body is an entity-reference array;
-#    '[]' exports everything):
-#    POST $PAP/api/snapshot/<tipId>/export   with body '[]'
+# 2. commit it — the PDP serves only COMMITTED snapshots:
+curl -sk -u "$AUTH" -H 'x-user-id: administrator' -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"import AgentGatewayPortfolioMCP"}' \
+  "$PAP/api/version-control/branches/<branch-id>/commit"
 
-# 3. merge the export into the serving branch. Multipart: field
-#    'snapshot-file' (application/json) + field 'conflict-resolutions'
-#    (text/plain!). The three COLLISIONs on MCP Method / MCP Tool Name /
-#    MCP Transaction Id are cosmetic (the template reuses mortgage ids);
-#    TAKE_MINE keeps the portfolio expressions:
-#    POST $PAP/api/snapshot/ID4AI%20Control%20Plane/merge
-
-# 4. attach the imported set under the branch's existing Global Decision
-#    Point (GET the GDP, append the child, PUT it back), then commit:
-#    POST $PAP/api/version-control/branches/$BR/commit
-#    body: {"message":"<non-empty commit message>"}
+# 3. point PAZ at it (the K8s profile layer does this; locally):
+dsconfig --no-prompt set-external-server-prop \
+  --server-name pingauthorizepap \
+  --set branch:AgentGatewayPortfolioMCP \
+  --set "decision-node:a7c4e2d0-8f11-4b5a-9c3d-6e8f2a1b4c7d"
+# decision-node = the Global Decision Point PolicySet id INSIDE the snapshot
+# (branch exports carry the whole tree from the GDP down). A snapshot with a
+# re-created GDP carries a new id; update the dsconfig to match or the PDP
+# returns 503 REQUEST_FAILED.
 ```
-
-What the committed branch now contains (verified by exporting the branch
-head): the `AgentGateway Portfolio MCP` service and policy set, the six
-policies with their rules and challenge/approval statements, the `MCP Amount`
-NUMBER / `MCP Amount Mirror` STRING attributes (`$.params.arguments.amount`),
-the `MCP Amount GreaterThan 10000` condition inside `High Risk Orders with
-HITL`, and the GDP with children `[Token Validation, APIM Mortgage MCP,
-AgentGateway Portfolio MCP]`. The mortgage content is untouched.
-
-Verify the wiring: one authorized call through the gateway, then the PAP
-decision audit — `request.service` must read `AgentGateway Portfolio MCP`
-(never `Default`), and both mortgage and portfolio calls now appear in the
-same branch's audit trail (the two-teams-one-PDP story, visible).
 
 ## 5. Inspect integration results
 
-**Script output:** 19 PASS lines + `Result: 19 passed, 0 failed`. Any FAIL:
+**Script output:** 27 PASS lines + `Result: 27 passed, 0 failed`. Any FAIL:
 401 = token validation, 403 = policy, 502 = sideband transport.
 
 **Recent decisions on PAZ:** on the PAP pod:
@@ -230,13 +267,12 @@ tail -1 /opt/out/instance/logs/decision-audit.log | python3 -m json.tool
 ```
 
 Fields worth eyeballing:
-- `decision` — PERMIT / DENY
+- `decision` — PERMIT / DENY / NOT_APPLICABLE (N/A for every request = the
+  empty-package or wrong-service failure above, not a policy verdict)
 - `statements[]` — machine-readable denial reasons (`approval_required`,
-  `delegation_not_permitted`, insufficient-scope challenges)
-- `evaluationLog[]` — watch `MCP Amount` resolve and the six-field mirror
-  comparisons fire
+  `agent_identity_mismatch`, `unpriceable_order_denied`, `order_above_limit`,
+  insufficient-scope challenges)
+- `evaluationLog[]` — the wrapper chain: `AgentGateway` → `Portfolio MCP` →
+  the matching policy, each ladder rule's outcome, and the band condition
+  that selected the order policy
 - `request.attributes` — exactly what the sideband envelope carried
-
-Confirm `request.service` reads `AgentGateway Portfolio MCP` for portfolio
-calls and `APIM Mortgage MCP` for mortgage calls — the centralized-PDP
-story: one audit trail, two gateways.

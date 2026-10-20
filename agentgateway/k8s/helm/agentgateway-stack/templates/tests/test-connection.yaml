@@ -29,8 +29,8 @@ spec:
           #    401 invalid_token challenge — a POSITIVE policy verdict that
           #    only a stack with the portfolio policies COMMITTED in PAP can
           #    produce (a fresh install without the committed tree denies via
-          #    the demo tree instead, so this catches the
-          #    import→merge→commit step having been skipped).
+          #    the default-deny fallback instead, so this catches the
+          #    bootstrap hook 81 (import+commit) having failed).
           code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$AG" \
             -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
             -H 'authorization: Bearer helm-test-garbage-token' \

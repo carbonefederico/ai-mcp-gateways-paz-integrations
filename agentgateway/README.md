@@ -61,11 +61,9 @@ agentgateway/
     │   ├── adapter-loopback.test.mjs
     │   └── proto-load.test.mjs
     ├── integration/
-    │   └── policy-e2e-tests.sh        # 19-test end-to-end policy matrix
+    │   └── policy-e2e-tests.sh        # 27-scenario end-to-end policy matrix
     ├── test.md                        # testing: layers, how to run both, setup guides
-    └── policy-snapshot/
-        ├── Portfolio MCP policies.snapshot   # importable Policy Editor snapshot
-        └── build-portfolio-snapshot.mjs      # regenerates the snapshot from the mortgage template
+    └── policy-snapshot/               # (empty — the branch snapshot lives under k8s/)
 ```
 
 ## Why an adapter exists at all
@@ -163,9 +161,10 @@ selects which policy set evaluates. The portfolio policy snapshot, the PAZ
 sideband configuration, and the full test walkthrough are in
 [`test/test.md`](test/test.md).
 
-**➡️ Continue with [`test/test.md`](test/test.md)** — the sample mortgage-era
-policies ported to the portfolio MCP (`amount`-tiered HITL with a six-field
-transaction mirror), the PAZ setup, the local wiring, and the 19-test matrix.
+**➡️ Continue with [`test/test.md`](test/test.md)** — the portfolio policy
+model (explicit order bands with a threshold constant, the mandatory
+ladder gates, the six-field transaction mirror), the PAZ setup, the local
+wiring, and the 27-scenario matrix.
 
 ## Kubernetes deployment (self-contained stack)
 
@@ -173,12 +172,15 @@ transaction mirror), the PAZ setup, the local wiring, and the 19-test matrix.
 namespace: PAZ + PAP (Ping chart, StatefulSets, PAZ standalone with its
 embedded store),
 paz-extauthz-adapter, agentgateway (standalone mode, config from ConfigMap),
-and demo-mcp. Policies, the jwt-lab token validator, and the sideband
-endpoint bootstrap automatically from the server profiles in
-`k8s/server-profiles/` (PAZ dsconfig layer + full-branch policy snapshot).
-The snapshot is imported at first start, but **import alone is not live**:
-the bootstrap imports it into its own branch and it must be merged into
-SYSTEM and committed — a manual admin-API step, exactly sequenced in
+and demo-mcp. Policies, the jwt-lab token validator, the sideband endpoint,
+and the PDP wiring bootstrap automatically from the server profiles in
+`k8s/server-profiles/` (PAZ dsconfig layer + the full-branch policy
+snapshot `AgentGatewayPortfolioMCP.SNAPSHOT`). The bootstrap is fully
+automatic: PAP's hook imports the snapshot into a branch named
+`AgentGatewayPortfolioMCP` (the filename minus `.SNAPSHOT`) and COMMITS it
+— the PDP serves only committed snapshots — while PAZ's hook waits for
+that commit before starting its PDP. No manual post-install step; the
+contracts behind the two profile hook overrides are documented in
 [`k8s/server-profiles/pingauthorizepap/policies/README.md`](k8s/server-profiles/pingauthorizepap/policies/README.md).
 
 Public surface: the AG MCP endpoint and the PAP UI (both via Ingress; TLS
@@ -220,23 +222,17 @@ All in `k8s/helm/agentgateway-stack/values.yaml`:
 
 Once DNS resolves, cert-manager issues the certificates automatically.
 
-### Post-install: make the policies live (manual, ~5 API calls)
-
-The bootstrap imports the policy snapshot into its own version-control
-branch; it must be merged into SYSTEM and committed before the PDP serves
-it — until then every call is denied. Exact sequence (works over
-`kubectl port-forward svc/<release>-pingauthorizepap 8443` too):
-[`k8s/server-profiles/pingauthorizepap/policies/README.md`](k8s/server-profiles/pingauthorizepap/policies/README.md).
-
 ### Verify
 
     helm test agentgateway-stack -n <your-namespace>
-    cd test/integration && AG_URL=https://<ag-host>/mcp \
-      AUD=https://<ag-host> ./policy-e2e-tests.sh   # 19/19
+    cd test/integration && AG_URL=https://<ag-host>/mcp/portfolio \
+      AUD=https://<ag-host> MCP_AUD=https://<ag-host>/mcp/portfolio \
+      ./policy-e2e-tests.sh   # 27/27
 
 The helm test asserts tokenless → 401/403, garbage token → 401
-`invalid_token` (a positive policy verdict — it only passes once the
-post-install commit step is done), demo-mcp health, and adapter reachability.
+`invalid_token` (a positive policy verdict — it only passes once the PAP
+branch is committed and PAZ's PDP has resolved it), demo-mcp health, and
+adapter reachability.
 
 ### Security posture
 
