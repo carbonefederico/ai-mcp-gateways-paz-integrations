@@ -57,15 +57,17 @@ skip later gates):
   `Constants.Portfolio_MCP Audience` (= the gateway's `/mcp/portfolio`
   resource URI, RFC 8707). A token for the wrong resource is `invalid_token`
   → 401.
-- **R2 delegated-agent authorization** — fires ONLY when the token
-  delegates (`act.sub` present): the acting agent must equal
+- **R2 agent identity — ONLY AGENTS CAN ACCESS** — the rule ALWAYS applies:
+  the acting agent (`act.sub`) must equal
   `Constants.Portfolio Analysis Agent` (`customer_support_agent`), an
-  admin-declared allow-list. Any other delegated actor is denied
-  (`agent_identity_mismatch`); non-delegated requests are outside R2
-  entirely. Authorization of an agent is an admin decision, not a token
-  property — `client_id` is irrelevant.
-- **R3 user claim** — delegated access (`act.sub` present) is reserved to
-  VIP users (`sub_type == vip_user`).
+  admin-declared allow-list. A token **without `act.sub` has no acting
+  agent and is denied** (`agent_identity_mismatch`) — there is no
+  direct-access path. Any other delegated actor is likewise denied.
+  Authorization of an agent is an admin decision, not a token property —
+  `client_id` is irrelevant.
+- **R3 user claim** — delegated access is reserved to VIP users
+  (`sub_type == vip_user`). Under R2 every token that reaches R3 already
+  carries the declared agent's `act.sub`.
 
 **Tuning knobs** (PAP constants): `Constants.Order Approval Threshold`
 (NUMBER, 20000) sets the HITL/deny band boundary; the audience and agent

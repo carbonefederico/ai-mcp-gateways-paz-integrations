@@ -25,7 +25,7 @@ test("DENY: sideband 200 with an embedded response object", async () => {
   assert.equal(r.body.response_code, 403);
 });
 
-test("fail closed after three attempts on transport failure", async () => {
+test("fail closed after two attempts on transport failure", async () => {
   let calls = 0;
   const counting = async () => {
     calls += 1;
@@ -34,7 +34,20 @@ test("fail closed after three attempts on transport failure", async () => {
   const r = await callSideband(config, envelope, counting);
   assert.equal(r.kind, "error");
   assert.equal(r.status, 502);
-  assert.equal(calls, 3);
+  assert.equal(calls, 2);
+});
+
+test("a fast first failure is retried immediately and recovers", async () => {
+  let calls = 0;
+  const flaky = async () => {
+    calls += 1;
+    if (calls === 1) throw new Error("ECONNRESET"); // stale pooled socket
+    return okFetch({ state: "s1" })();
+  };
+  const r = await callSideband(config, envelope, flaky);
+  assert.equal(calls, 2);
+  assert.equal(r.kind, "permit");
+  assert.equal(r.body.state, "s1");
 });
 
 test("sideband non-200 is an integration error, not a denial", async () => {
@@ -75,7 +88,7 @@ test("loadConfig requires SERVICE_URL and SECRET_HEADER_VALUE", () => {
   assert.throws(() => loadConfig({ SERVICE_URL: "https://x" }), /SECRET_HEADER_VALUE/);
   const c = loadConfig({ SERVICE_URL: "https://x/", SECRET_HEADER_VALUE: "s" });
   assert.equal(c.serviceUrl, "https://x"); // trailing slash stripped
-  assert.equal(c.timeoutMs, 5000);
+  assert.equal(c.timeoutMs, 2000);
 });
 
 test("TLS trust failure (DEPTH_ZERO_SELF_SIGNED_CERT) marks the result unrecoverable — pod must exit so K8s re-extracts", async () => {

@@ -46,7 +46,7 @@ export function loadConfig(env = process.env) {
   return {
     serviceUrl,
     secretHeaderValue,
-    timeoutMs: Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 5000,
+    timeoutMs: Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 2000,
     debugLogging: /^(1|true|yes|on)$/i.test(env.DEBUG_LOGGING ?? ""),
     listenPort: Number.parseInt(env.LISTEN_PORT ?? "", 10) || 8082,
   };
@@ -79,7 +79,13 @@ async function fetchJsonWithTimeout(config, path, payload, fetchImpl) {
   }
 }
 
-const retryDelaysMs = [0, 1000]; // one immediate retry, then one after 1s — the probe is idempotent
+// One immediate retry — the ladder exists for fast connection-level failures
+// (stale pooled sockets: the retry lands on a fresh socket and succeeds).
+// Budget: 2 attempts x 2s + 0ms delay = 4s worst case, inside the gateway's
+// 5s extAuthz requestTimeout, so the adapter never outlives the gateway.
+// Only thrown failures retry (reset/TLS/timeout-abort); a sideband non-200
+// answer is an immediate terminal error.
+const retryDelaysMs = [0];
 
 // TLS trust failure against the sideband endpoint means the extracted PAZ cert
 // is stale (PAZ regenerates its self-signed cert on every bootstrap). The

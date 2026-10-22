@@ -55,27 +55,34 @@ summarize() {
 
 # ---------------------------------------------------------------- tokens ---
 echo "Minting scenario tokens (jwt-lab)..."
+# Access model (agents-only): every PERMIT requires aud (R1) -> act.sub ==
+# customer_support_agent (R2, ALWAYS applies — a token without act.sub is
+# denied agent_identity_mismatch) -> sub_type == vip_user (R3) -> scope (R4)
+# -> band/mirror. All "positive" tokens therefore carry the declared agent's
+# act and a VIP subject; alice/desktop-client tokens are R2-negative fixtures.
 T_READ=$(mint '{"sub":"alice","client_id":"desktop-client","aud":"'$MCP_AUD'","scope":"portfolio:read"}' 1800)
 T_WRITE=$(mint '{"sub":"alice","client_id":"desktop-client","aud":"'$MCP_AUD'","scope":"portfolio:read portfolio:write"}' 1800)
-T_APPROVED=$(mint '{"sub":"alice","client_id":"desktop-client","aud":"'$MCP_AUD'","scope":"portfolio:read portfolio:write","approved_for":"submit_trade_order","txn":"txn-70001-sell","tctx":{"tool":"submit_trade_order","customerId":"CUST-70001","symbol":"ACME","side":"SELL","quantity":100,"amount":50000}}' 900)
 T_EXPIRED=$(mint '{"sub":"alice","aud":"'$MCP_AUD'","scope":"portfolio:read"}' -300)
 T_WRITE_ONLY=$(mint '{"sub":"alice","aud":"'$MCP_AUD'","scope":"portfolio:write"}' 900)
-T_APPROVED_AMOUNT_DRIFT=$(mint '{"sub":"alice","client_id":"desktop-client","aud":"'$MCP_AUD'","scope":"portfolio:read portfolio:write","approved_for":"submit_trade_order","txn":"txn-70001-sell","tctx":{"tool":"submit_trade_order","customerId":"CUST-70001","symbol":"ACME","side":"SELL","quantity":100,"amount":10000}}' 900)
 
+# VIP user + declared agent: the permit path for every scenario
 T_VIP_AGENT=$(mint '{"sub":"vip_user","sub_type":"vip_user","client_id":"customer_support_agent","aud":"'$MCP_AUD'","scope":"portfolio:read portfolio:write","act":{"sub":"customer_support_agent"}}' 1800)
+T_VIP_AGENT_READ=$(mint '{"sub":"vip_user","sub_type":"vip_user","client_id":"customer_support_agent","aud":"'$MCP_AUD'","scope":"portfolio:read","act":{"sub":"customer_support_agent"}}' 1800)
 T_STD_AGENT=$(mint '{"sub":"standard_user","sub_type":"standard","client_id":"customer_support_agent","aud":"'$MCP_AUD'","scope":"portfolio:read portfolio:write","act":{"sub":"customer_support_agent"}}' 1800)
 T_VIP_DIRECT=$(mint '{"sub":"vip_user","sub_type":"vip_user","client_id":"advisory-portal","aud":"'$MCP_AUD'","scope":"portfolio:read portfolio:write"}' 1800)
 T_VIP_APPROVED=$(mint '{"sub":"vip_user","sub_type":"vip_user","client_id":"customer_support_agent","aud":"'$MCP_AUD'","scope":"portfolio:read portfolio:write","act":{"sub":"customer_support_agent"},"approved_for":"submit_trade_order","txn":"txn-70001-sell","tctx":{"tool":"submit_trade_order","customerId":"CUST-70001","symbol":"ACME","side":"SELL","quantity":100,"amount":50000}}' 1800)
 # R2 positive: the DECLARED agent (Constants.Portfolio Analysis Agent = customer_support_agent),
 # whatever client minted the token — authorization of the agent is an admin decision, not a token one
-T_AGENT_DECLARED=$(mint '{"sub":"vip_user","sub_type":"vip_user","client_id":"advisory-portal","aud":"'$MCP_AUD'","scope":"portfolio:read portfolio:write","act":{"sub":"customer_support_agent"}}' 900)
-# R2 negative: a delegated actor that is NOT the declared agent
+T_AGENT_DECLARED=$(mint '{"sub":"vip_user","sub_type":"vip_user","client_id":"advisory-portal","aud":"'$MCP_AUD'","scope":"portfolio:read","act":{"sub":"customer_support_agent"}}' 900)
+# R2 negatives: a delegated actor that is NOT the declared agent; a direct token with NO act.sub
 T_AGENT_UNDECLARED=$(mint '{"sub":"vip_user","sub_type":"vip_user","client_id":"customer_support_agent","aud":"'$MCP_AUD'","scope":"portfolio:read portfolio:write","act":{"sub":"marketing_agent"}}' 900)
+T_NO_AGENT=$(mint '{"sub":"alice","client_id":"desktop-client","aud":"'$MCP_AUD'","scope":"portfolio:read portfolio:write"}' 900)
 # HITL-band approvals: 3k order mirrored exactly (tctx matches payload, txn bound)
-T_APPROVED_3K=$(mint '{"sub":"alice","client_id":"desktop-client","aud":"'$MCP_AUD'","scope":"portfolio:read portfolio:write","approved_for":"submit_trade_order","txn":"txn-70001-small","tctx":{"tool":"submit_trade_order","customerId":"CUST-70001","symbol":"ACME","side":"SELL","quantity":3,"amount":3000}}' 900)
 T_VIP_APPROVED_3K=$(mint '{"sub":"vip_user","sub_type":"vip_user","client_id":"customer_support_agent","aud":"'$MCP_AUD'","scope":"portfolio:read portfolio:write","act":{"sub":"customer_support_agent"},"approved_for":"submit_trade_order","txn":"txn-70001-small","tctx":{"tool":"submit_trade_order","customerId":"CUST-70001","symbol":"ACME","side":"SELL","quantity":3,"amount":3000}}' 900)
-# R1 negative: token minted for the wrong audience (the gateway root, not the MCP resource)
-T_READ_OLD_AUD=$(mint '{"sub":"alice","client_id":"desktop-client","aud":"'$AUD'","scope":"portfolio:read"}' 900)
+# 50k-order approval token (VIP + declared agent) for the band-denial tests
+T_VIP_APPROVED_50K_DRIFT=$(mint '{"sub":"vip_user","sub_type":"vip_user","client_id":"customer_support_agent","aud":"'$MCP_AUD'","scope":"portfolio:read portfolio:write","act":{"sub":"customer_support_agent"},"approved_for":"submit_trade_order","txn":"txn-70001-sell","tctx":{"tool":"submit_trade_order","customerId":"CUST-70001","symbol":"ACME","side":"SELL","quantity":100,"amount":10000}}' 900)
+# R1 negative: token minted for the wrong audience (the gateway root, not the MCP resource) — but valid per R2/R3
+T_READ_OLD_AUD=$(mint '{"sub":"vip_user","sub_type":"vip_user","client_id":"customer_support_agent","aud":"'$AUD'","scope":"portfolio:read","act":{"sub":"customer_support_agent"}}' 900)
 
 # ---------------------------------------------------------------- bodies ---
 # Special JSON-RPC bodies are built with jq -c to avoid quoting mistakes.
@@ -174,24 +181,24 @@ run() { # run <label> <expect-code> <token> <body>
 
 echo ""
 echo "--- Core policy matrix ---"
-run "T1 tools/list (session, portfolio:read)"       200 "$T_READ"       '{"jsonrpc":"2.0","method":"tools/list","id":1}'
-run "T2 read tool with portfolio:read"              200 "$T_READ"       "$BODY_T2"
+run "T1 tools/list (session, portfolio:read)"       200 "$T_VIP_AGENT_READ" '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+run "T2 read tool with portfolio:read"              200 "$T_VIP_AGENT_READ" "$BODY_T2"
 # Order bands (explicit partition): amount<=0 deny | 0<amount<=20K HITL | amount>20K deny
-run "T3 HITL order (3k) without approval"           403 "$T_WRITE"      "$BODY_T3"
-run "T3b order without amount (unpriceable deny)"   403 "$T_WRITE"      "$BODY_T3B"
-run "T3c explicit zero-amount order (deny)"         403 "$T_WRITE"      "$BODY_T_ZERO"
-run "T3d HITL order (3k) with approval mirror"      200 "$T_APPROVED_3K" "$BODY_T_3K_APPROVED"
-run "T3e order at 20K boundary (HITL, no appr)"     403 "$T_WRITE"      "$BODY_T_20K"
-run "T4 oversized order (50k) without approval"     403 "$T_WRITE"      "$BODY_T4"
+# All order fixtures below use the VIP+agent token: band/approval verdicts, not agent verdicts
+run "T3 HITL order (3k) without approval"           403 "$T_VIP_AGENT"      "$BODY_T3"
+run "T3b order without amount (unpriceable deny)"   403 "$T_VIP_AGENT"      "$BODY_T3B"
+run "T3c explicit zero-amount order (deny)"         403 "$T_VIP_AGENT"      "$BODY_T_ZERO"
+run "T3d HITL order (3k) with approval mirror"      200 "$T_VIP_APPROVED_3K" "$BODY_T_3K_APPROVED"
+run "T3e order at 20K boundary (HITL, no appr)"     403 "$T_VIP_AGENT"      "$BODY_T_20K"
+run "T4 oversized order (50k) without approval"     403 "$T_VIP_AGENT"      "$BODY_T4"
 # Approval cannot exceed the band: a fully mirrored 50k approval is still denied
-run "T5 oversized order WITH approval mirror"       403 "$T_APPROVED"   "$BODY_T4"
-run "T5a approved but wrong txn (replay denied)"    403 "$T_APPROVED"   "$BODY_T4_WRONG_TXN"
-run "T5b approved token, payload without txn"       403 "$T_APPROVED"   "$BODY_T4_NO_TXN"
-run "T5c approved for 10k, executing 50k (drift)"   403 "$T_APPROVED_AMOUNT_DRIFT" "$BODY_T4"
-run "T5d vip+agent 3k order WITH approval"          200 "$T_VIP_APPROVED_3K" "$BODY_T_3K_APPROVED"
-run "T6 unknown tool (default deny)"                403 "$T_READ"       "$BODY_T6"
-run "T8 read tool with write-only scope"            403 "$T_WRITE_ONLY" "$BODY_T2"
-run "T9 expired token"                              401 "$T_EXPIRED"    '{"jsonrpc":"2.0","method":"tools/list","id":9}'
+run "T5 oversized order WITH approval mirror"       403 "$T_VIP_APPROVED"   "$BODY_T4"
+run "T5a approved but wrong txn (replay denied)"    403 "$T_VIP_APPROVED"   "$BODY_T4_WRONG_TXN"
+run "T5b approved token, payload without txn"       403 "$T_VIP_APPROVED"   "$BODY_T4_NO_TXN"
+run "T5c approved for 10k, executing 50k (drift)"   403 "$T_VIP_APPROVED_50K_DRIFT" "$BODY_T4"
+run "T6 unknown tool (default deny)"                403 "$T_VIP_AGENT_READ" "$BODY_T6"
+run "T8 read tool with write-only scope"            403 "$T_WRITE_ONLY"     "$BODY_T2"
+run "T9 expired token"                              401 "$T_EXPIRED"        '{"jsonrpc":"2.0","method":"tools/list","id":9}'
 
 echo ""
 echo "--- Transport posture ---"
@@ -208,8 +215,9 @@ report "T0 bodyless GET stream open (default deny)" 403 "$out"
 echo ""
 echo "--- Delegation (RFC 8693 act.sub / sub_type) ---"
 run "D1 vip_user + advisory agent read"             200 "$T_VIP_AGENT"    "$BODY_T2"
-run "D2 standard_user + same agent (gate deny)"     403 "$T_STD_AGENT"    "$BODY_T2"
-run "D3 vip_user direct, no agent"                  200 "$T_VIP_DIRECT"   "$BODY_T2"
+run "D2 standard_user + same agent (R3 gate deny)"  403 "$T_STD_AGENT"    "$BODY_T2"
+# Only agents can access: a direct token (no act.sub) is R2-denied even for a VIP subject
+run "D3 vip_user direct, no agent (R2 deny)"        403 "$T_VIP_DIRECT"   "$BODY_T2"
 run "D4 vip+agent 3k order (no approval deny)"      403 "$T_VIP_AGENT"    "$BODY_T3"
 run "D5 vip+agent risky, no approval"               403 "$T_VIP_AGENT"    "$BODY_T4"
 # Delegation does not extend the band: vip+agent with a fully mirrored 50k approval is still
@@ -222,6 +230,9 @@ echo "--- Ladder gates (R1 audience / R2 agent identity) ---"
 BODY_T_R2=$(jq -nc --argjson args "$ORDER_3K" '{jsonrpc:"2.0",method:"tools/call",id:12,params:{name:"submit_trade_order",arguments:$args}}')
 run "R2 declared agent allowed (act.sub matches)"   200 "$T_AGENT_DECLARED"  "$BODY_T2"
 run "R2 undeclared agent denied (act.sub differs)"  403 "$T_AGENT_UNDECLARED" "$BODY_T2"
+# ONLY AGENTS: a valid, in-audience token with NO act.sub is denied — there is
+# no direct-access path. R2 always applies.
+run "R2 no act.sub denied (only agents)"            403 "$T_NO_AGENT"        "$BODY_T2"
 # A token minted for the wrong resource is an invalid token for this MCP — RFC 6750 invalid_token,
 # which PAZ maps to 401 (the R1 statement's payload carries status 401).
 run "R1 wrong audience (gateway-root aud)"          401 "$T_READ_OLD_AUD"  "$BODY_T2"

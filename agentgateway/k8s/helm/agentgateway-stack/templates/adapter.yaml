@@ -61,7 +61,7 @@ spec:
             - name: LISTEN_PORT
               value: "8082"
             - name: SIDEBAND_TIMEOUT_MS
-              value: "5000"
+              value: "2000"
             - name: DEBUG_LOGGING
               value: "false"
             - name: NODE_EXTRA_CA_CERTS
