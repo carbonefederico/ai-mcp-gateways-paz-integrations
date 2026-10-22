@@ -118,7 +118,7 @@ SID_HDR=()
 SESSION_ID=$(curl -sk --max-time 40 -X POST "$AG_URL" \
     -H "Content-Type: application/json" \
     -H "Accept: application/json, text/event-stream" \
-    -H "Authorization: Bearer $(mint '{"sub":"alice","client_id":"desktop-client","aud":"'$MCP_AUD'","scope":"portfolio:read"}' 300)" \
+    -H "Authorization: Bearer $(mint '{"sub":"vip_user","sub_type":"vip_user","client_id":"customer_support_agent","aud":"'$MCP_AUD'","scope":"portfolio:read","act":{"sub":"customer_support_agent"}}' 300)" \
     -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"policy-e2e","version":"1.0"}},"id":0}' \
     -D - -o /dev/null 2>/dev/null | grep -i '^mcp-session-id:' | awk '{print $2}' | tr -d '\r')
 [ -n "$SESSION_ID" ] && SID_HDR=(-H "mcp-session-id: $SESSION_ID")
@@ -198,7 +198,9 @@ run "T5b approved token, payload without txn"       403 "$T_VIP_APPROVED"   "$BO
 run "T5c approved for 10k, executing 50k (drift)"   403 "$T_VIP_APPROVED_50K_DRIFT" "$BODY_T4"
 run "T6 unknown tool (default deny)"                403 "$T_VIP_AGENT_READ" "$BODY_T6"
 run "T8 read tool with write-only scope"            403 "$T_WRITE_ONLY"     "$BODY_T2"
-run "T9 expired token"                              401 "$T_EXPIRED"        '{"jsonrpc":"2.0","method":"tools/list","id":9}'
+# Expired token WITHOUT act.sub: R2's agent-identity deny (403) now wins over
+# the expired/invalid 401 — only-agents denies before the token-validity check.
+run "T9 expired token, no agent (R2 deny)"          403 "$T_EXPIRED"        '{"jsonrpc":"2.0","method":"tools/list","id":9}'
 
 echo ""
 echo "--- Transport posture ---"
