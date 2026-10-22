@@ -101,6 +101,13 @@ export async function callSideband(config, envelope, fetchImpl = globalThis.fetc
       const { response, body } = await fetchJsonWithTimeout(config, "/sideband/request", envelope, fetchImpl);
       const elapsedMs = Math.round(performance.now() - started);
       if (response.status === 200) {
+        // A 200 the PEP cannot parse is not an answer: empty or malformed
+        // bodies fail closed (502 sideband-error) rather than reading as
+        // permit — same posture as Ping's Kong adapter. A real permit is the
+        // echoed request envelope; a deny embeds a `response` object.
+        if (body === null) {
+          return { kind: "error", status: 502, message: "Malformed sideband response", elapsedMs };
+        }
         return body?.response
           ? { kind: "deny", body: body.response, elapsedMs }
           : { kind: "permit", body, elapsedMs };

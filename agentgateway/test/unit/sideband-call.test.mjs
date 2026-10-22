@@ -43,6 +43,22 @@ test("sideband non-200 is an integration error, not a denial", async () => {
   assert.equal(r.status, 502);
 });
 
+test("200 with malformed JSON fails closed", async () => {
+  const rawFetch = async () => ({ ok: true, status: 200, text: async () => "not-json{{" });
+  const r = await callSideband(config, envelope, rawFetch);
+  assert.equal(r.kind, "error");
+  assert.equal(r.status, 502);
+  assert.match(r.message, /Malformed sideband response/);
+});
+
+test("200 with an empty body fails closed", async () => {
+  const rawFetch = async () => ({ ok: true, status: 200, text: async () => "" });
+  const r = await callSideband(config, envelope, rawFetch);
+  assert.equal(r.kind, "error");
+  assert.equal(r.status, 502);
+  assert.match(r.message, /Malformed sideband response/);
+});
+
 test("request carries PDG-TOKEN and the JSON envelope", async () => {
   let seen;
   await callSideband(config, envelope, async (url, init) => {
